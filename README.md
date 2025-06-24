@@ -60,8 +60,7 @@ This platform allows users to create accounts, post travel experiences with phot
 ### Clone repository
 
 ```bash
-git clone https://github.com/your-username/travel-blog-platform.git
-cd travel-blog-platform
+git clone https://github.com/dijanahasanii/TravelBlog
 ```
 
 ### Environment Variables
