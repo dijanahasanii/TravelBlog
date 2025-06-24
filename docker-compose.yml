@@ -1,0 +1,64 @@
+services:
+  mongo:
+    image: mongo
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
+  user-service:
+    build: ./user-service
+    ports:
+      - "5004:5004"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/user-db
+      JWT_SECRET: adriantedua1212
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  content-service:
+    build: ./content-service
+    ports:
+      - "5002:5002"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/content-db
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  location-service:
+    build: ./location-service
+    ports:
+      - "5003:5003"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/location-db
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  notification-service:
+    build: ./notification-service
+    ports:
+      - "5006:5006"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/notification-db
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    stdin_open: true
+    tty: true
+    depends_on:
+      - user-service
+      - content-service
+      - location-service
+
+volumes:
+  mongo-data:
