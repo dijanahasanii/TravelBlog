@@ -14,7 +14,7 @@ services:
       - "5004:5004"
     environment:
       MONGO_URI: mongodb://mongo:27017/user-db
-      JWT_SECRET: adriantedua1212
+      JWT_SECRET: dijana1
     depends_on:
       - mongo
     restart: unless-stopped
