@@ -1,11 +1,11 @@
 const Post = require("../models/Post");
 
+// Create a new post
 exports.createPost = async (req, res) => {
   try {
     const { caption, image, location } = req.body;
     const userId = req.user.id;
 
-    // ✅ Check for missing fields
     if (!caption || !image || !location) {
       return res.status(400).json({ message: "All fields are required" });
     }
@@ -30,12 +30,11 @@ exports.createPost = async (req, res) => {
     res.status(201).json({ message: "Post created", post: newPost });
   } catch (err) {
     console.error("❌ Failed to create post:", err.message);
-    res
-      .status(500)
-      .json({ message: "Failed to create post", error: err.message });
+    res.status(500).json({ message: "Failed to create post", error: err.message });
   }
 };
 
+// Update an existing post
 exports.updatePost = async (req, res) => {
   try {
     const { postId } = req.params;
@@ -54,19 +53,19 @@ exports.updatePost = async (req, res) => {
     await post.save();
     res.json({ message: "Post updated", post });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to update post", error: err.message });
+    res.status(500).json({ message: "Failed to update post", error: err.message });
   }
 };
 
+// ✅ Get all posts with populated usernames
 exports.getAllPosts = async (req, res) => {
   try {
-    const posts = await Post.find().sort({ createdAt: -1 });
+    const posts = await Post.find()
+      .sort({ createdAt: -1 })
+      .populate("userId", "username"); // 👈 Populating userId with username only
+
     res.status(200).json(posts);
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch posts", error: err.message });
+    res.status(500).json({ message: "Failed to fetch posts", error: err.message });
   }
 };
