@@ -1,0 +1,166 @@
+/* Universal styles for the whole app */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #fcefee; /* soft pink background */
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Centered container for pages */
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  padding-top: 60px;
+}
+
+/* Page title */
+.title {
+  color: #333;
+  margin-bottom: 20px;
+  font-size: 28px;
+  text-align: center;
+}
+
+/* Form wrapper for SignUp, EditProfile, ChangeEmail, ChangePassword, etc. */
+.form-box {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;           /* slightly bigger vertical spacing */
+  background-color: white;
+  padding: 30px;
+  border-radius: 12px; /* smooth rounded edges */
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.1);
+  width: 320px;
+  box-sizing: border-box;
+}
+
+/* Input and textarea styles */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="tel"],
+textarea,
+select {
+  padding: 12px 14px;       /* a bit more padding for comfort */
+  font-size: 16px;
+  border-radius: 8px;       /* slightly more rounded corners */
+  border: 1px solid #ccc;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Focus effect */
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="tel"]:focus,
+textarea:focus,
+select:focus {
+  border-color: #007bff;
+  outline: none;
+  box-shadow: 0 0 6px #007bff66;
+}
+
+/* Labels */
+label {
+  font-size: 16px;
+  font-weight: 600;
+  color: #555;
+  user-select: none;
+}
+
+/* Buttons */
+button {
+  background-color: #007BFF;
+  color: white;
+  border: none;
+  padding: 14px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.3s ease;
+  margin-top: 12px;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+/* Error and success message styles */
+.message {
+  margin-top: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.message.success {
+  color: green;
+}
+
+.message.error {
+  color: red;
+}
+
+/* Avatar styles (used in profile edit) */
+.avatar {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 15px;
+  border: 3px solid white;
+  box-shadow: 0 0 8px rgba(0,0,0,0.2);
+}
+
+/* Optional spacer for layout */
+.spacer {
+  height: 20px;
+}
+
+/* Specific container for profile-related pages */
+.edit-profile-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 40px 0;
+  background-color: #fcefee;
+  flex-direction: column;
+}
+
+/* Responsive adjustments */
+@media (max-width: 400px) {
+  .form-box {
+    width: 90vw;
+    padding: 20px;
+  }
+}
+
+/* BottomNav.css */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: white;
+  border-top: 1px solid #ccc;
+  display: flex;
+  justify-content: space-around;
+  padding: 12px 0;
+  z-index: 100;
+}
+
+.bottom-nav a {
+  font-size: 24px;
+  color: #666;
+  text-decoration: none;
+}
+
+.bottom-nav a.active {
+  color: #007BFF;
+}
