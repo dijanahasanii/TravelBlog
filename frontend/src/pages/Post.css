@@ -1,0 +1,46 @@
+.post-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: #f4f4f4;
+}
+
+.post-box {
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.post-box h2 {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.post-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.post-form input[type="text"],
+.post-form select,
+.post-form input[type="file"],
+.post-form button {
+  padding: 10px;
+  font-size: 16px;
+}
+
+.post-form button {
+  background-color: #3498db;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.post-form button:hover {
+  background-color: #2980b9;
+}
