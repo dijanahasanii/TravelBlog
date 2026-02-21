@@ -2,6 +2,15 @@ const Comment = require("../models/Comment");
 const Post = require("../models/Post");
 const axios = require("axios");
 
+exports.getCommentsForPost = async (req, res) => {
+  try {
+    const comments = await Comment.find({ postId: req.params.postId }).sort({ createdAt: 1 });
+    res.json(comments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.addComment = async (req, res) => {
   try {
     const { postId, text } = req.body;
@@ -12,9 +21,10 @@ exports.addComment = async (req, res) => {
 
     const post = await Post.findById(postId);
     if (post && post.userId.toString() !== userId) {
-      await axios.post("http://notification-service:5006/notifications", {
-        targetUserId: post.userId.toString(),  // recipient
-        userId: userId,                        // actor
+      await axios.post("http://localhost:5006/notifications", {
+        targetUserId: post.userId.toString(),
+        userId: userId,
+        postId: postId,
         type: "comment",
         commentText: text,
         message: `User ${userId} commented: ${text}`,

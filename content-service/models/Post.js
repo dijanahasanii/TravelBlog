@@ -17,7 +17,7 @@ const postSchema = new mongoose.Schema(
     },
     location: {
       type: String,
-      required: true, // ✅ made required
+      required: true,
     },
     likes: {
       type: [String],
@@ -38,5 +38,8 @@ const postSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+postSchema.index({ createdAt: -1 });
+postSchema.index({ userId: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Post", postSchema);

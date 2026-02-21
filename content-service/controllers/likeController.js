@@ -2,6 +2,15 @@ const Like = require("../models/Like");
 const Post = require("../models/Post");
 const axios = require("axios");
 
+exports.getLikesForPost = async (req, res) => {
+  try {
+    const likes = await Like.find({ postId: req.params.postId });
+    res.json(likes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.toggleLike = async (req, res) => {
   try {
     const { postId } = req.body;
@@ -19,9 +28,10 @@ exports.toggleLike = async (req, res) => {
     const post = await Post.findById(postId);
     if (post && post.userId.toString() !== userId) {
       // Send notification with updated field names and message
-      await axios.post("http://notification-service:5006/notifications", {
-        targetUserId: post.userId.toString(),  // recipient
-        userId: userId,                        // actor
+      await axios.post("http://localhost:5006/notifications", {
+        targetUserId: post.userId.toString(),
+        userId: userId,
+        postId: postId,
         type: "like",
         message: `User ${userId} liked your post`,
       });

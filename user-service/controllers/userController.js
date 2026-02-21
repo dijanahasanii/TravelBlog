@@ -13,10 +13,18 @@ exports.getUserById = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    const updateData = { ...req.body };
+    const { currentPassword, newPassword, ...otherFields } = req.body;
+    const updateData = { ...otherFields };
 
-    if (updateData.password) {
-      updateData.password = await bcrypt.hash(updateData.password, 10);
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ message: "Current password is required to set a new password" });
+      }
+      const user = await User.findById(req.params.id);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) return res.status(401).json({ message: "Current password is incorrect" });
+      updateData.password = await bcrypt.hash(newPassword, 10);
     }
 
     const updatedUser = await User.findByIdAndUpdate(
