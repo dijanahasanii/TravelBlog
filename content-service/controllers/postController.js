@@ -57,13 +57,9 @@ exports.updatePost = async (req, res) => {
   }
 };
 
-// ✅ Get all posts with populated usernames
 exports.getAllPosts = async (req, res) => {
   try {
-    const posts = await Post.find()
-      .sort({ createdAt: -1 })
-      .populate("userId", "username"); // 👈 Populating userId with username only
-
+    const posts = await Post.find().sort({ createdAt: -1 }).allowDiskUse(true);
     res.status(200).json(posts);
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch posts", error: err.message });

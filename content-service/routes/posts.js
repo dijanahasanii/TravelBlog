@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middleware/auth");
 const Post = require("../models/Post");
+const Like = require("../models/Like");
+const Comment = require("../models/Comment");
+const axios = require("axios");
 const { createPost, getAllPosts, updatePost } = require("../controllers/postController");
 
 // Create a post
@@ -9,6 +12,16 @@ router.post("/", verifyToken, createPost);
 
 // Get all posts
 router.get("/", getAllPosts);
+
+// Get posts by a specific user
+router.get("/user/:userId", async (req, res) => {
+  try {
+    const posts = await Post.find({ userId: req.params.userId }).sort({ createdAt: -1 }).allowDiskUse(true);
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching user posts", error: err.message });
+  }
+});
 
 // Get a single post by ID
 router.get("/:id", async (req, res) => {
@@ -45,7 +58,15 @@ router.delete("/:id", verifyToken, async (req, res) => {
     }
 
     await post.deleteOne();
-    console.log("✅ Post deleted");
+
+    // Cascade delete likes, comments, and notifications for this post
+    await Promise.all([
+      Like.deleteMany({ postId: req.params.id }),
+      Comment.deleteMany({ postId: req.params.id }),
+      axios.delete(`http://localhost:5006/notifications/post/${req.params.id}`).catch(() => {}),
+    ]);
+
+    console.log("✅ Post and related data deleted");
     res.json({ message: "Post deleted successfully" });
   } catch (err) {
     console.error("❌ Error in DELETE /posts/:id:", err.message);
