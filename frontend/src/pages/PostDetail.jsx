@@ -1,67 +1,339 @@
-import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useState, useCallback } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { formatTimeAgo } from '../utils/formatTime'
+import { getAvatarSrc, getCurrentUserAvatar } from '../utils/avatar'
+import { useToast } from '../context/ToastContext'
+import CommentThread from '../components/CommentThread'
+import ImageCarousel from '../components/ImageCarousel'
+import VideoPlayer from '../components/VideoPlayer'
+import ConfirmModal from '../components/ConfirmModal'
+import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
+import {
+  ArrowLeft, Heart, MessageCircle, MapPin, MoreHorizontal, Pencil, Trash2,
+} from 'lucide-react'
+
+const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
 
 export default function PostDetail() {
-  const { id } = useParams();
-  const [post, setPost] = useState(null);
-  const [comment, setComment] = useState("");
+  const { postId }    = useParams()
+  const navigate      = useNavigate()
+  const toast         = useToast()
+  const currentUserId = localStorage.getItem('currentUserId')
+  const username      = localStorage.getItem('username')
+  const token         = localStorage.getItem('token')
 
-  useEffect(() => {
-    async function fetchPost() {
-      const res = await fetch(`http://localhost:5001/api/posts/${id}`);
-      const data = await res.json();
-      setPost(data);
+  const [post,       setPost]       = useState(null)
+  const [author,     setAuthor]     = useState(null)
+  const [likes,      setLikes]      = useState([])
+  const [comments,   setComments]   = useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState(null)
+  const [submitting,   setSubmitting]   = useState(false)
+  const [confirmModal, setConfirmModal] = useState(null)
+  const [menuOpen,   setMenuOpen]   = useState(false)
+
+  const isLiked  = likes.some((l) => l?.userId?.toString() === currentUserId || l === currentUserId)
+  const isOwner  = post?.userId?.toString() === currentUserId
+
+  const fetchData = useCallback(async () => {
+    if (!isRealId(postId)) {
+      setError('Post not found.')
+      setLoading(false)
+      return
     }
+    setLoading(true)
+    try {
+      const [postRes, likesRes, commentsRes] = await Promise.all([
+        fetch(`${CONTENT_SERVICE}/posts/${postId}`),
+        fetch(`${CONTENT_SERVICE}/likes/${postId}`).then((r) => r.ok ? r.json() : []),
+        fetch(`${CONTENT_SERVICE}/comments/${postId}`).then((r) => r.ok ? r.json() : []),
+      ])
 
-    fetchPost();
-  }, [id]);
+      if (!postRes.ok) throw new Error('Post not found')
+      const postData = await postRes.json()
+      setPost(postData)
+      setLikes(likesRes)
 
-  async function handleCommentSubmit(e) {
-    e.preventDefault();
-    const authorId = localStorage.getItem("userId");
-    if (!authorId) return alert("You must be logged in");
+      // Enrich comments with usernames
+      const enriched = await Promise.all(
+        commentsRes.map(async (c) => {
+          if (c.userId?.toString() === currentUserId) return { ...c, username }
+          if (!isRealId(c.userId?.toString())) return c
+          try {
+            const r = await fetch(`${USER_SERVICE}/users/${c.userId}`)
+            if (r.ok) {
+              const u = await r.json()
+              return { ...c, username: u.username, authorAvatar: getAvatarSrc(u) }
+            }
+          } catch (_) {}
+          return c
+        })
+      )
+      setComments(enriched)
 
-    await fetch("http://localhost:5001/api/comments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        postId: id,
-        authorId,
-        content: comment,
-      }),
-    });
+      // Fetch author
+      if (isRealId(postData.userId?.toString())) {
+        const userRes = await fetch(`${USER_SERVICE}/users/${postData.userId}`)
+        if (userRes.ok) setAuthor(await userRes.json())
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to load post')
+    } finally {
+      setLoading(false)
+    }
+  }, [postId, currentUserId, username])
 
-    setComment("");
-    window.location.reload();
+  useEffect(() => { fetchData() }, [fetchData])
+
+  // Close menu on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (menuOpen && !e.target.closest('.post-detail-menu')) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [menuOpen])
+
+  const handleLike = async () => {
+    const alreadyLiked = likes.some(
+      (l) => l?.userId?.toString() === currentUserId || l?.toString() === currentUserId || l === currentUserId
+    )
+
+    // Optimistic update
+    setLikes((prev) =>
+      alreadyLiked
+        ? prev.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId)
+        : [...prev, { userId: currentUserId }]
+    )
+
+    try {
+      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ postId }),
+      })
+      if (!res.ok) throw new Error()
+    } catch {
+      // Roll back
+      setLikes((prev) =>
+        alreadyLiked
+          ? [...prev, { userId: currentUserId }]
+          : prev.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId)
+      )
+      toast.error('Failed to update like')
+    }
   }
 
-  if (!post) return <p>Loading post...</p>;
+  const handleComment = async (text, parentId = null) => {
+    if (!text?.trim() || submitting) return
+    setSubmitting(true)
+    try {
+      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ postId, text: text.trim(), parentId }),
+      })
+      const data = await res.json()
+      const entry = data.comment || {
+        _id: Date.now().toString(),
+        userId: currentUserId,
+        text: text.trim(),
+        parentId,
+        likes: [],
+        username,
+        createdAt: new Date().toISOString(),
+      }
+      setComments((prev) => [...prev, { ...entry, username }])
+    } catch { toast.error('Failed to post comment') }
+    finally { setSubmitting(false) }
+  }
+
+  const handleDelete = () => {
+    setConfirmModal({
+      title: 'Delete post?',
+      message: 'This action cannot be undone. The post and all its likes and comments will be permanently removed.',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${CONTENT_SERVICE}/posts/${postId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (res.ok) {
+            toast.success('Post deleted')
+            navigate(-1)
+          } else {
+            toast.error('Failed to delete post')
+          }
+        } catch { toast.error('Network error') }
+      },
+    })
+  }
+
+  if (loading) {
+    return (
+      <div className="loading-page">
+        <div className="spinner spinner-dark" style={{ width: 32, height: 32, borderWidth: 3 }} />
+      </div>
+    )
+  }
+
+  if (error || !post) {
+    return (
+      <div className="loading-page" style={{ flexDirection: 'column', gap: 16 }}>
+        <p style={{ color: 'var(--text-secondary)' }}>{error || 'Post not found'}</p>
+        <button className="btn btn-secondary" onClick={() => navigate(-1)}>Go back</button>
+      </div>
+    )
+  }
+
+  const captionText = post.caption?.split('📍')[0]?.trim()
 
   return (
-    <div style={{ maxWidth: "600px", margin: "2rem auto" }}>
-      <h2>Post by {post.user?.username}</h2>
-      <img src={post.image} alt={post.caption} style={{ width: "100%" }} />
-      <p>{post.caption}</p>
-      <p><small>{new Date(post.createdAt).toLocaleString()}</small></p>
+    <div className="page" style={{ background: 'var(--surface-page)', paddingBottom: 80 }}>
+      {/* Sticky top bar */}
+      <header
+        style={{
+          position: 'sticky', top: 0, zIndex: 50,
+          background: 'var(--surface-nav)', backdropFilter: 'blur(16px) saturate(180%)',
+          borderBottom: '1px solid var(--border-subtle)',
+          padding: '12px var(--content-padding)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}
+      >
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => navigate(-1)}
+          style={{ padding: '6px 8px', borderRadius: 'var(--radius-full)', color: 'var(--text-secondary)' }}
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0, flex: 1 }}>
+          Post
+        </h1>
+        {isOwner && (
+          <div style={{ position: 'relative' }} className="post-detail-menu">
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setMenuOpen((v) => !v)}
+              style={{ borderRadius: 'var(--radius-full)', padding: '6px 8px' }}
+            >
+              <MoreHorizontal size={18} />
+            </button>
+            {menuOpen && (
+              <div
+                style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                  background: 'var(--surface-card)', border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                  minWidth: 150, overflow: 'hidden', zIndex: 200, animation: 'fade-in 0.15s ease',
+                }}
+              >
+                <button
+                  onClick={() => { setMenuOpen(false); navigate(`/edit-post/${postId}`) }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'none', textAlign: 'left', fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', fontFamily: 'var(--font-sans)' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--neutral-50)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                >
+                  <Pencil size={14} /> Edit post
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); handleDelete() }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'none', textAlign: 'left', fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-error)', fontFamily: 'var(--font-sans)' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-error-bg)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                >
+                  <Trash2 size={14} /> Delete post
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </header>
 
-      <h3>Comments</h3>
-      {post.comments?.length === 0 && <p>No comments yet.</p>}
-      {post.comments?.map((c, i) => (
-        <div key={i} style={{ borderTop: "1px solid #ccc", paddingTop: "0.5rem" }}>
-          <strong>{c.authorId}:</strong> {c.content}
+      {/* Author row */}
+      <div style={{ padding: '16px var(--content-padding)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button
+          onClick={() => isOwner ? navigate('/profile') : isRealId(post.userId?.toString()) && navigate(`/user/${post.userId}`)}
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}
+        >
+          <img
+            src={getAvatarSrc(author || { username: author?.username })}
+            alt={author?.username}
+            className="avatar avatar-md"
+          />
+          <div style={{ textAlign: 'left' }}>
+            <div style={{ fontWeight: 'var(--weight-semibold)', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>
+              {isOwner ? 'You' : `@${author?.username || 'traveler'}`}
+            </div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+              {formatTimeAgo(post.createdAt)}
+              {post.location && <span> · <MapPin size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> {post.location}</span>}
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Full media */}
+      {post.video
+        ? <VideoPlayer src={post.video} />
+        : <ImageCarousel images={post.images?.length ? post.images : [post.image]} alt="Travel" />
+      }
+
+      {/* Like + comment counts */}
+      <div style={{ padding: '12px var(--content-padding)', display: 'flex', alignItems: 'center', gap: 16, borderBottom: '1px solid var(--border-subtle)' }}>
+        <button
+          className={`action-btn${isLiked ? ' liked' : ''}`}
+          onClick={handleLike}
+          style={{ fontSize: 'var(--text-base)', fontWeight: 'var(--weight-semibold)' }}
+        >
+          <Heart size={20} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={isLiked ? 0 : 2} />
+          {likes.length} {likes.length === 1 ? 'like' : 'likes'}
+        </button>
+        <button
+          className="action-btn"
+          style={{ fontSize: 'var(--text-base)', fontWeight: 'var(--weight-semibold)', cursor: 'default' }}
+        >
+          <MessageCircle size={20} />
+          {comments.length} {comments.length === 1 ? 'comment' : 'comments'}
+        </button>
+      </div>
+
+      {/* Caption */}
+      {captionText && (
+        <div style={{ padding: '14px var(--content-padding)', borderBottom: '1px solid var(--border-subtle)' }}>
+          <p style={{ fontSize: 'var(--text-base)', color: 'var(--text-primary)', lineHeight: 'var(--leading-relaxed)', margin: 0 }}>
+            <span style={{ fontWeight: 'var(--weight-semibold)' }}>@{author?.username || 'traveler'} </span>
+            {captionText}
+          </p>
         </div>
-      ))}
+      )}
 
-      <form onSubmit={handleCommentSubmit} style={{ marginTop: "1rem" }}>
-        <input
-          type="text"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Write a comment..."
-          required
+      {/* Location pill */}
+      {post.location && (
+        <div style={{ padding: '10px var(--content-padding)', borderBottom: '1px solid var(--border-subtle)' }}>
+          <span className="location-pill" style={{ fontSize: 'var(--text-sm)' }}>
+            <MapPin size={12} /> {post.location}
+          </span>
+        </div>
+      )}
+
+      {/* Comments */}
+      <div style={{ padding: '16px var(--content-padding)' }}>
+        <p style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-semibold)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>
+          {comments.length === 0 ? 'No comments yet — be the first!' : `${comments.length} ${comments.length === 1 ? 'comment' : 'comments'}`}
+        </p>
+        <CommentThread
+          comments={comments}
+          onAdd={handleComment}
+          currentUserId={currentUserId}
+          token={token}
+          navigate={navigate}
+          avatarSrc={getCurrentUserAvatar()}
         />
-        <button type="submit">Post</button>
-      </form>
+      </div>
+
+      <ConfirmModal config={confirmModal} onClose={() => setConfirmModal(null)} />
     </div>
-  );
+  )
 }

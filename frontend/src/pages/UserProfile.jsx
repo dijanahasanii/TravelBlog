@@ -1,51 +1,57 @@
-import React, { useEffect, useState } from "react";
-import { formatDistanceToNow } from "date-fns";
+import React, { useEffect, useState } from 'react'
+import { formatDistanceToNow } from 'date-fns'
+import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
 
 export default function UserProfile({ userId, onBack }) {
-  const [user, setUser] = useState(null);
-  const [userPosts, setUserPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null)
+  const [userPosts, setUserPosts] = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const fetchUserAndPosts = async () => {
       try {
-        const userRes = await fetch(`http://localhost:5004/users/${userId}`);
-        const postsRes = await fetch(`http://localhost:5002/posts/user/${userId}`);
-        const userData = await userRes.json();
-        const postsData = await postsRes.json();
-        setUser(userData);
-        setUserPosts(postsData);
+        const userRes = await fetch(`${USER_SERVICE}/users/${userId}`)
+        const postsRes = await fetch(
+          `${CONTENT_SERVICE}/posts/user/${userId}`
+        )
+        const userData = await userRes.json()
+        const postsData = await postsRes.json()
+        setUser(userData)
+        setUserPosts(postsData)
       } catch (err) {
-        console.error("Failed to fetch user or posts:", err);
+        console.error('Failed to fetch user or posts:', err)
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
-    };
+    }
 
-    fetchUserAndPosts();
-  }, [userId]);
+    fetchUserAndPosts()
+  }, [userId])
 
-  if (loading) return <p>Loading...</p>;
-  if (!user) return <div>User not found</div>;
+  if (loading) return <p>Loading...</p>
+  if (!user) return <div>User not found</div>
 
   return (
     <div>
       <button onClick={onBack}>Back to Feed</button>
       <h2>{user.username || user.fullName}</h2>
-      <p>{user.bio || "No bio provided."}</p>
-      <p>Location: {user.location || "Unknown"}</p>
+      <p>{user.bio || 'No bio provided.'}</p>
+      <p>Location: {user.location || 'Unknown'}</p>
 
       <h3>Posts by {user.username || user.fullName}</h3>
       {userPosts.length === 0 && <p>No posts to show</p>}
       {userPosts.map((post) => (
-        <div key={post._id} style={{ border: "1px solid #ccc", margin: 10, padding: 10 }}>
-          <img src={post.image} alt={post.caption} style={{ width: "100%" }} />
+        <div
+          key={post._id}
+          style={{ border: '1px solid #ccc', margin: 10, padding: 10 }}
+        >
+          <img src={post.image} alt={post.caption} style={{ width: '100%' }} />
           <div>{post.caption}</div>
-          <div style={{ fontSize: "0.8em", color: "gray" }}>
+          <div style={{ fontSize: '0.8em', color: 'gray' }}>
             {formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })}
           </div>
         </div>
       ))}
     </div>
-  );
+  )
 }

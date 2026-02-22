@@ -1,42 +1,61 @@
-const User = require("../models/User");
-const bcrypt = require("bcryptjs");
+const User = require('../models/User')
+const bcrypt = require('bcryptjs')
 
 exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId).select("-password");
-    if (!user) return res.status(404).json({ message: "User not found" });
-    res.json(user);
+    const user = await User.findById(req.params.userId).select('-password')
+    if (!user) return res.status(404).json({ message: 'User not found' })
+    res.json(user)
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: 'Server error' })
   }
-};
+}
 
 exports.updateUser = async (req, res) => {
   try {
-    const { currentPassword, newPassword, ...otherFields } = req.body;
-    const updateData = { ...otherFields };
+    const { currentPassword, newPassword, avatar, ...otherFields } = req.body
+    const updateData = { ...otherFields }
 
+    // Handle avatar — accept base64 string, enforce a 2 MB cap
+    if (avatar !== undefined) {
+      if (avatar === null || avatar === '') {
+        updateData.avatar = null
+      } else {
+        // rough byte estimate: base64 length * 0.75
+        const approxBytes = (avatar.length * 3) / 4
+        if (approxBytes > 2 * 1024 * 1024) {
+          return res.status(413).json({ message: 'Avatar image is too large. Please use a smaller image.' })
+        }
+        updateData.avatar = avatar
+      }
+    }
+
+    // Handle password change
     if (newPassword) {
       if (!currentPassword) {
-        return res.status(400).json({ message: "Current password is required to set a new password" });
+        return res.status(400).json({
+          message: 'Current password is required to set a new password',
+        })
       }
-      const user = await User.findById(req.params.id);
-      if (!user) return res.status(404).json({ message: "User not found" });
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) return res.status(401).json({ message: "Current password is incorrect" });
-      updateData.password = await bcrypt.hash(newPassword, 10);
+      const user = await User.findById(req.params.id)
+      if (!user) return res.status(404).json({ message: 'User not found' })
+      const isMatch = await bcrypt.compare(currentPassword, user.password)
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Current password is incorrect' })
+      }
+      updateData.password = await bcrypt.hash(newPassword, 10)
     }
 
     const updatedUser = await User.findByIdAndUpdate(
       req.params.id,
       { $set: updateData },
       { new: true }
-    ).select("-password");
+    ).select('-password')
 
-    if (!updatedUser) return res.status(404).json({ message: "User not found" });
+    if (!updatedUser) return res.status(404).json({ message: 'User not found' })
 
-    res.json(updatedUser);
+    res.json(updatedUser)
   } catch (err) {
-    res.status(500).json({ message: "Update failed", error: err.message });
+    res.status(500).json({ message: 'Update failed', error: err.message })
   }
-};
+}

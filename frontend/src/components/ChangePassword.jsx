@@ -1,102 +1,258 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useToast } from '../context/ToastContext'
+import { ArrowLeft, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
+import { USER_SERVICE } from '../constants/api'
 
 export default function ChangePassword() {
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [message, setMessage] = useState('');
-  const navigate = useNavigate();
+  const [current, setCurrent] = useState('')
+  const [newPass, setNewPass] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [showPass, setShowPass] = useState({ current: false, new: false })
+  const [success, setSuccess] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+  const toast = useToast()
 
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (e) => {
+    e.preventDefault()
 
-    if (newPassword !== confirmPassword) {
-      setMessage('New passwords do not match');
-      return;
+    if (newPass !== confirm) {
+      toast.error("New passwords don't match.")
+      return
+    }
+    if (newPass.length < 6) {
+      toast.error('Password must be at least 6 characters.')
+      return
+    }
+    if (!current) {
+      toast.error('Please enter your current password.')
+      return
     }
 
-    if (!currentPassword || !newPassword) {
-      setMessage('Please fill out all password fields');
-      return;
-    }
-
-    const userId = localStorage.getItem("currentUserId");
-    const token = localStorage.getItem("token");
+    const userId = localStorage.getItem('currentUserId')
+    const token = localStorage.getItem('token')
+    setLoading(true)
 
     try {
-      const res = await fetch(`http://localhost:5004/users/${userId}`, {
-        method: "PATCH",
+      const res = await fetch(`${USER_SERVICE}/users/${userId}`, {
+        method: 'PATCH',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ currentPassword, newPassword }),
-      });
-      const data = await res.json();
+        body: JSON.stringify({
+          currentPassword: current,
+          newPassword: newPass,
+        }),
+      })
+      const data = await res.json()
       if (res.ok) {
-        setMessage('Password changed successfully');
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
+        setSuccess(true)
+        toast.success('Password changed!')
+        setTimeout(() => navigate('/profile'), 2000)
       } else {
-        setMessage(data.message || 'Failed to change password');
+        toast.error(data.message || 'Failed to change password.')
       }
-    } catch (err) {
-      setMessage('Network error. Please try again.');
+    } catch {
+      toast.error('Network error. Please try again.')
+    } finally {
+      setLoading(false)
     }
-  };
+  }
 
   return (
-    <div style={{ maxWidth: 400, margin: 'auto' }}>
-      <h2>Change Password</h2>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--surface-page)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '32px var(--content-padding)',
+      }}
+    >
+      <div style={{ maxWidth: 440, width: '100%' }}>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => navigate('/profile')}
+          style={{
+            marginBottom: 24,
+            gap: 6,
+            color: 'var(--text-secondary)',
+            padding: '6px 10px',
+          }}
+        >
+          <ArrowLeft size={16} />
+          Back to Profile
+        </button>
 
-      <form onSubmit={handlePasswordChange}>
-        <label>
-          Current Password:
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={e => setCurrentPassword(e.target.value)}
-            required
-            style={{ width: '100%', marginTop: 5, marginBottom: 10 }}
-          />
-        </label>
+        <div
+          style={{
+            background: 'var(--surface-card)',
+            borderRadius: 'var(--radius-xl)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: 'var(--shadow-md)',
+            padding: '32px 28px',
+          }}
+        >
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <div
+              style={{
+                width: 52,
+                height: 52,
+                background: success
+                  ? 'var(--color-success-bg)'
+                  : 'var(--brand-50)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+                color: success ? 'var(--color-success)' : 'var(--brand-500)',
+                border: `1px solid ${success ? 'rgba(22,163,74,0.2)' : 'var(--brand-100)'}`,
+              }}
+            >
+              {success ? <CheckCircle2 size={24} /> : <Lock size={24} />}
+            </div>
+            <h1
+              style={{
+                fontFamily: 'var(--font-serif)',
+                fontSize: 'var(--text-2xl)',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.02em',
+                marginBottom: 6,
+              }}
+            >
+              {success ? 'Password Changed!' : 'Change Password'}
+            </h1>
+            <p
+              style={{
+                fontSize: 'var(--text-sm)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {success
+                ? 'Redirecting to your profile…'
+                : 'Enter your current password and choose a new one.'}
+            </p>
+          </div>
 
-        <label>
-          New Password:
-          <input
-            type="password"
-            value={newPassword}
-            onChange={e => setNewPassword(e.target.value)}
-            required
-            style={{ width: '100%', marginTop: 5, marginBottom: 10 }}
-          />
-        </label>
+          {!success && (
+            <form
+              onSubmit={handleSubmit}
+              style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
+            >
+              {/* Current password */}
+              <div className="form-group">
+                <label className="form-label">Current Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    className="form-input"
+                    type={showPass.current ? 'text' : 'password'}
+                    placeholder="Your current password"
+                    value={current}
+                    onChange={(e) => setCurrent(e.target.value)}
+                    required
+                    autoFocus
+                    style={{ paddingRight: 44 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowPass((p) => ({ ...p, current: !p.current }))
+                    }
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                    }}
+                  >
+                    {showPass.current ? (
+                      <EyeOff size={16} />
+                    ) : (
+                      <Eye size={16} />
+                    )}
+                  </button>
+                </div>
+              </div>
 
-        <label>
-          Confirm New Password:
-          <input
-            type="password"
-            value={confirmPassword}
-            onChange={e => setConfirmPassword(e.target.value)}
-            required
-            style={{ width: '100%', marginTop: 5, marginBottom: 10 }}
-          />
-        </label>
+              {/* New password */}
+              <div className="form-group">
+                <label className="form-label">New Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    className="form-input"
+                    type={showPass.new ? 'text' : 'password'}
+                    placeholder="Min. 6 characters"
+                    value={newPass}
+                    onChange={(e) => setNewPass(e.target.value)}
+                    required
+                    style={{ paddingRight: 44 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass((p) => ({ ...p, new: !p.new }))}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                    }}
+                  >
+                    {showPass.new ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
 
-        <button type="submit">Change Password</button>
-      </form>
+              {/* Confirm */}
+              <div className="form-group">
+                <label className="form-label">Confirm New Password</label>
+                <input
+                  className={`form-input${confirm && confirm !== newPass ? ' has-error' : ''}`}
+                  type="password"
+                  placeholder="Repeat new password"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  required
+                />
+                {confirm && confirm !== newPass && (
+                  <span className="field-error">Passwords don't match</span>
+                )}
+              </div>
 
-      {message && (
-        <p style={{ marginTop: 15, color: message.includes('successfully') ? 'green' : 'red' }}>
-          {message}
-        </p>
-      )}
-
-      <button onClick={() => navigate("/profile")} style={{ marginTop: 20 }}>
-        Back to Profile
-      </button>
+              <button
+                type="submit"
+                className="btn btn-primary btn-full"
+                disabled={
+                  loading || !current || !newPass || newPass !== confirm
+                }
+                style={{ height: 48, marginTop: 4 }}
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner" /> Changing…
+                  </>
+                ) : (
+                  'Change Password'
+                )}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
     </div>
-  );
+  )
 }

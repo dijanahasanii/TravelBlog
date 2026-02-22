@@ -1,470 +1,935 @@
-import React, { useEffect, useState } from "react";
-import { dummyUsers, dummyPosts, locations } from "./dummyData";
-import EditPostModal from "../components/EditPostModal";
+import React, { useEffect, useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
+import { dummyUsers, dummyPosts, locations } from './dummyData'
+import EditPostModal from '../components/EditPostModal'
+import ConfirmModal from '../components/ConfirmModal'
+import CommentThread from '../components/CommentThread'
+import ImageCarousel from '../components/ImageCarousel'
+import VideoPlayer from '../components/VideoPlayer'
+import { formatTimeAgo } from '../utils/formatTime'
+import { getAvatarSrc, dicebearUrl, getCurrentUserAvatar } from '../utils/avatar'
+import { useToast } from '../context/ToastContext'
+import {
+  Heart,
+  MessageCircle,
+  MapPin,
+  Search,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  Compass,
+  Users,
+  Bookmark,
+  Share2,
+} from 'lucide-react'
 
-const Feed = () => {
-  const currentUserId = localStorage.getItem("currentUserId");
-  const token = localStorage.getItem("token");
-  const [posts, setPosts] = useState([]);
-  const [likedPosts, setLikedPosts] = useState(new Set());
-  const [commentsVisible, setCommentsVisible] = useState({});
-  const [newComment, setNewComment] = useState({});
-  const [editingPost, setEditingPost] = useState(null);
-  const [locationFilter, setLocationFilter] = useState("");
+// ── Bookmark helpers (localStorage) ──
+const BOOKMARKS_KEY = 'wandr_bookmarks'
+function getBookmarks() {
+  try { return JSON.parse(localStorage.getItem(BOOKMARKS_KEY)) || [] } catch { return [] }
+}
+function toggleBookmark(postId) {
+  const saved = getBookmarks()
+  const idx = saved.indexOf(postId)
+  if (idx === -1) { saved.push(postId); localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(saved)); return true }
+  saved.splice(idx, 1); localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(saved)); return false
+}
+function isBookmarked(postId) { return getBookmarks().includes(postId) }
+
+// ── Skeleton card ──
+function SkeletonCard() {
+  return (
+    <div className="post-card">
+      <div className="post-card-header">
+        <div
+          className="skeleton avatar-md"
+          style={{ borderRadius: 'var(--radius-full)' }}
+        />
+        <div
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}
+        >
+          <div
+            className="skeleton"
+            style={{ height: 14, width: '40%', borderRadius: 6 }}
+          />
+          <div
+            className="skeleton"
+            style={{ height: 11, width: '25%', borderRadius: 6 }}
+          />
+        </div>
+      </div>
+      <div className="skeleton" style={{ width: '100%', height: 260 }} />
+      <div
+        style={{
+          padding: '12px 16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        <div
+          className="skeleton"
+          style={{ height: 13, width: '80%', borderRadius: 6 }}
+        />
+        <div
+          className="skeleton"
+          style={{ height: 13, width: '55%', borderRadius: 6 }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ── Post card component ──
+function PostCard({
+  post,
+  currentUserId,
+  token,
+  userCache,
+  onLike,
+  onAddComment,
+  onEdit,
+  onDelete,
+  onToggleComments,
+  commentsVisible,
+}) {
+  const user = getUserById(post.userId, userCache)
+  const isOwner =
+    post.userId === currentUserId || post.userId?.toString() === currentUserId
+  const isLiked =
+    Array.isArray(post.likes) &&
+    post.likes.some(
+      (l) =>
+        l?.userId?.toString() === currentUserId ||
+        l?.toString() === currentUserId ||
+        l === currentUserId
+    )
+
+  const navigate = useNavigate()
+  const toast = useToast()
+  const [menuOpen,    setMenuOpen]    = useState(false)
+  const [bookmarked,  setBookmarked]  = useState(() => isBookmarked(post._id))
+  const menuRef  = useRef(null)
+
+  const handleBookmark = () => {
+    const nowSaved = toggleBookmark(post._id)
+    setBookmarked(nowSaved)
+    toast.success(nowSaved ? 'Post saved!' : 'Removed from saved')
+  }
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}/posts/${post._id}`
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success('Link copied to clipboard!')
+    } catch {
+      toast.error('Could not copy link')
+    }
+  }
+
+  const isRealUserId = isRealId(post.userId)
+  const goToProfile = () => {
+    if (isOwner) {
+      navigate('/profile')
+    } else if (post.userId && isRealUserId) {
+      navigate(`/user/${post.userId}`)
+    }
+  }
 
   useEffect(() => {
-    fetchPosts();
-  }, []);
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target))
+        setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
-  const fetchPosts = async () => {
-    const dummyWithDates = dummyPosts.slice(0, 10).map((p) => ({
-      ...p,
-      likes: p.likes || [],
-      comments: p.comments || [],
-    }));
+  const captionText = post.caption?.split('📍')[0]?.trim() || ''
+  const showComments = commentsVisible[post._id]
 
-    let realPosts = [];
-    try {
-      const res = await fetch("http://localhost:5002/posts");
-      if (res.ok) {
-        const data = await res.json();
+  return (
+    <article className="post-card">
+      {/* Header */}
+      <div className="post-card-header">
+        <button
+          onClick={goToProfile}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: 'none', border: 'none',
+            cursor: (isOwner || isRealUserId) ? 'pointer' : 'default',
+            padding: 0, flex: 1, minWidth: 0, textAlign: 'left',
+          }}
+        >
+          <img
+            src={getAvatarSrc(user)}
+            alt={user?.username}
+            className="avatar avatar-md"
+            onError={(e) => { e.target.src = dicebearUrl(user?.username || 'user') }}
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontWeight: 'var(--weight-semibold)',
+                fontSize: 'var(--text-base)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              {isOwner ? 'You' : `@${user?.username || 'traveler'}`}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                {formatTimeAgo(post.createdAt)}
+              </span>
+              {post.location && (
+                <>
+                  <span style={{ color: 'var(--neutral-300)', fontSize: 10 }}>·</span>
+                  <span className="location-pill">
+                    <MapPin size={10} />
+                    {post.location}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </button>
 
-        // Fetch real like and comment counts from Like/Comment collections
-        realPosts = await Promise.all(
-          data.map(async (p) => {
-            const [likesRes, commentsRes] = await Promise.all([
-              fetch(`http://localhost:5002/likes/${p._id}`).then(r => r.ok ? r.json() : []),
-              fetch(`http://localhost:5002/comments/${p._id}`).then(r => r.ok ? r.json() : []),
-            ]);
-            return {
-              ...p,
-              createdAt: p.createdAt || new Date().toISOString(),
-              likes: likesRes,
-              comments: commentsRes,
-            };
-          })
-        );
+        {/* Owner actions menu */}
+        {isOwner && (
+          <div ref={menuRef} style={{ position: 'relative' }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setMenuOpen((v) => !v)}
+              style={{
+                width: 32,
+                height: 32,
+                padding: 0,
+                borderRadius: 'var(--radius-full)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <MoreHorizontal size={16} />
+            </button>
+            {menuOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  right: 0,
+                  background: 'var(--surface-card)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  boxShadow: 'var(--shadow-lg)',
+                  minWidth: 140,
+                  overflow: 'hidden',
+                  zIndex: 100,
+                  animation: 'fade-in 0.15s ease',
+                }}
+              >
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    onEdit(post)
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 'none',
+                    background: 'none',
+                    textAlign: 'left',
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 'var(--weight-medium)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    color: 'var(--text-primary)',
+                    fontFamily: 'var(--font-sans)',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = 'var(--neutral-50)')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'none')
+                  }
+                >
+                  <Pencil size={14} />
+                  Edit post
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    onDelete(post._id)
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    border: 'none',
+                    background: 'none',
+                    textAlign: 'left',
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 'var(--weight-medium)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    color: 'var(--color-error)',
+                    fontFamily: 'var(--font-sans)',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = 'var(--color-error-bg)')
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = 'none')
+                  }
+                >
+                  <Trash2 size={14} />
+                  Delete post
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Media — video or image carousel */}
+      {post.video
+        ? <VideoPlayer src={post.video} onClick={isRealId(post._id) ? () => navigate(`/posts/${post._id}`) : undefined} />
+        : <ImageCarousel images={post.images?.length ? post.images : [post.image]} alt="Travel post" onClick={isRealId(post._id) ? () => navigate(`/posts/${post._id}`) : undefined} />
       }
-    } catch (err) {
-      console.error("Content service unavailable, showing dummy posts only", err);
+
+      {/* Actions row */}
+      <div className="post-card-actions">
+        <button
+          className={`action-btn${isLiked ? ' liked' : ''}`}
+          onClick={() => onLike(post._id)}
+          aria-label={isLiked ? 'Unlike' : 'Like'}
+        >
+          <Heart
+            size={18}
+            fill={isLiked ? 'currentColor' : 'none'}
+            strokeWidth={isLiked ? 0 : 2}
+            style={{ transition: 'transform 0.2s var(--ease-spring)' }}
+          />
+          <span>{post.likes?.length ?? 0}</span>
+        </button>
+
+        <button
+          className="action-btn"
+          onClick={() => onToggleComments(post._id)}
+        >
+          <MessageCircle size={18} />
+          <span>{post.comments?.length ?? 0}</span>
+        </button>
+
+        <div
+          style={{
+            marginLeft: 'auto',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <button
+            className="action-btn"
+            onClick={handleShare}
+            aria-label="Share post"
+            title="Copy link"
+          >
+            <Share2 size={16} />
+          </button>
+          <button
+            className={`action-btn${bookmarked ? ' liked' : ''}`}
+            onClick={handleBookmark}
+            aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark post'}
+            title={bookmarked ? 'Saved' : 'Save post'}
+            style={bookmarked ? { color: 'var(--brand-500)' } : {}}
+          >
+            <Bookmark size={16} fill={bookmarked ? 'currentColor' : 'none'} strokeWidth={bookmarked ? 0 : 2} />
+          </button>
+          <button
+            className="action-btn"
+            onClick={() => onToggleComments(post._id)}
+            style={{ fontSize: 'var(--text-xs)', padding: '4px 8px' }}
+          >
+            {showComments ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {showComments ? 'Hide' : 'View'} comments
+          </button>
+        </div>
+      </div>
+
+      {/* Caption */}
+      {captionText && (
+        <div className="post-card-body" style={{ paddingTop: 0 }}>
+          <p
+            style={{
+              fontSize: 'var(--text-base)',
+              color: 'var(--text-primary)',
+              lineHeight: 'var(--leading-relaxed)',
+              margin: 0,
+            }}
+          >
+            {captionText}
+          </p>
+        </div>
+      )}
+
+      {/* Comments section */}
+      {showComments && (
+        <CommentThread
+          comments={post.comments || []}
+          onAdd={(text, parentId) => onAddComment(post._id, text, parentId)}
+          currentUserId={currentUserId}
+          token={token}
+          navigate={navigate}
+          avatarSrc={getCurrentUserAvatar()}
+        />
+      )}
+    </article>
+  )
+}
+
+// ── Helpers ──
+const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
+
+function getUserById(id, userCache) {
+  if (!id) return { username: 'traveler' }
+  if (userCache?.[id]) return userCache[id]
+  return dummyUsers.find((u) => u._id === id) || { username: 'traveler' }
+}
+
+const PAGE_LIMIT = 8
+
+// ── Main Feed ──
+const Feed = () => {
+  const currentUserId = localStorage.getItem('currentUserId')
+  const token = localStorage.getItem('token')
+  const toast = useToast()
+
+  const [posts,          setPosts]          = useState([])
+  const [userCache,      setUserCache]      = useState({})
+  const [followingIds,   setFollowingIds]   = useState([])
+  const [commentsVisible,setCommentsVisible]= useState({})
+  const [editingPost,    setEditingPost]    = useState(null)
+  const [confirmModal,   setConfirmModal]   = useState(null)
+  const [locationFilter, setLocationFilter] = useState('')
+  const [loading,        setLoading]        = useState(true)
+  const [loadingMore,    setLoadingMore]    = useState(false)
+  const [activeTab,      setActiveTab]      = useState('all')
+  const sentinelRef    = useRef(null)
+  const pageRef        = useRef(1)
+  const hasMoreRef     = useRef(true)
+  const loadingMoreRef = useRef(false)
+  const lastLoadRef    = useRef(0)
+
+  // Stable helper — never changes, safe to call from anywhere
+  const enrichPosts = useRef(async (rawPosts) => {
+    return Promise.all(rawPosts.map(async (p) => {
+      const [likesRes, commentsRes] = await Promise.all([
+        fetch(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => r.ok ? r.json() : []),
+        fetch(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => r.ok ? r.json() : []),
+      ])
+      return { ...p, createdAt: p.createdAt || new Date().toISOString(), likes: likesRes, comments: commentsRes }
+    }))
+  }).current
+
+  const prefetchUsers = useRef(async (newPosts) => {
+    const authorIds    = newPosts.map((p) => p.userId?.toString())
+    const commenterIds = newPosts.flatMap((p) => (p.comments || []).map((c) => c.userId?.toString()))
+    const allIds = [...new Set([...authorIds, ...commenterIds].filter(
+      (id) => id && !dummyUsers.find((u) => u._id === id)
+    ))]
+    if (!allIds.length) return
+    const fetched = {}
+    await Promise.all(allIds.map(async (id) => {
+      try {
+        const res = await fetch(`${USER_SERVICE}/users/${id}`)
+        if (res.ok) fetched[id] = await res.json()
+      } catch (_) {}
+    }))
+    if (Object.keys(fetched).length) setUserCache((prev) => ({ ...prev, ...fetched }))
+  }).current
+
+  const loadMore = useRef(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current) return
+    const now = Date.now()
+    if (now - lastLoadRef.current < 1500) return
+    lastLoadRef.current = now
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    const nextPage = pageRef.current + 1
+    try {
+      const res = await fetch(`${CONTENT_SERVICE}/posts?page=${nextPage}&limit=${PAGE_LIMIT}`)
+      if (res.ok) {
+        const data = await res.json()
+        const raw  = Array.isArray(data) ? data : data.posts || []
+        const more = Array.isArray(data) ? false : (data.hasMore || false)
+        const enriched = await enrichPosts(raw)
+        setPosts((prev) => {
+          const existingIds = new Set(prev.map((p) => p._id))
+          const fresh = enriched.filter((p) => !existingIds.has(p._id))
+          return [...prev, ...fresh]
+        })
+        prefetchUsers(enriched)
+        pageRef.current    = nextPage
+        hasMoreRef.current = more
+      }
+    } catch (_) {}
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+  }).current
+
+  // Initial load — runs exactly once on mount
+  useEffect(() => {
+    let cancelled = false
+
+    const run = async () => {
+      setLoading(true)
+      pageRef.current    = 1
+      hasMoreRef.current = true
+
+      try {
+        const fRes = await fetch(`${USER_SERVICE}/users/${currentUserId}/following-ids`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!cancelled && fRes.ok) setFollowingIds(await fRes.json())
+      } catch (_) {}
+
+      const dummyWithDates = dummyPosts.map((p) => ({ ...p, likes: p.likes || [], comments: p.comments || [] }))
+
+      let realPosts = []
+      let backendHasMore = false
+      try {
+        const res = await fetch(`${CONTENT_SERVICE}/posts?page=1&limit=${PAGE_LIMIT}`)
+        if (res.ok) {
+          const data = await res.json()
+          const raw  = Array.isArray(data) ? data : data.posts || []
+          backendHasMore = Array.isArray(data) ? false : (data.hasMore || false)
+          realPosts = await enrichPosts(raw)
+        }
+      } catch (_) {
+        console.warn('Backend unavailable, showing sample posts')
+      }
+
+      if (cancelled) return
+
+      const combined = [...realPosts, ...dummyWithDates]
+      combined.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      const safePosts = combined.filter((p) => p.userId)
+      setPosts(safePosts)
+      prefetchUsers(safePosts)
+      hasMoreRef.current = backendHasMore
+      setLoading(false)
     }
 
-    const combined = [...realPosts, ...dummyWithDates];
-    combined.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    run()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-      const safePosts = combined.filter((p) => p.userId);
-      setPosts(safePosts);
-      prefetchUsers(safePosts);
-
-      // Mark posts already liked by current user
-      const alreadyLiked = new Set(
-        safePosts
-          .filter((p) => Array.isArray(p.likes) && p.likes.some((l) => l.userId?.toString() === currentUserId || l === currentUserId))
-          .map((p) => p._id)
-      );
-      setLikedPosts(alreadyLiked);
-  };
-
-  const [userCache, setUserCache] = useState({});
-
-  const getUserById = (id) => {
-    if (!id) return { username: "unknown" };
-    if (userCache[id]) return userCache[id];
-    return dummyUsers.find((u) => u._id === id) || { username: "unknown" };
-  };
-
-  const prefetchUsers = async (posts) => {
-    // Collect post author IDs + all commenter IDs
-    const authorIds = posts.map((p) => p.userId?.toString());
-    const commenterIds = posts.flatMap((p) => p.comments.map((c) => c.userId?.toString()));
-    const allIds = [...new Set([...authorIds, ...commenterIds].filter((id) => id && !dummyUsers.find((u) => u._id === id)))];
-
-    const fetched = {};
-    await Promise.all(
-      allIds.map(async (id) => {
-        try {
-          const res = await fetch(`http://localhost:5004/users/${id}`);
-          if (res.ok) fetched[id] = await res.json();
-        } catch (_) {}
-      })
-    );
-    if (Object.keys(fetched).length > 0) setUserCache((prev) => ({ ...prev, ...fetched }));
-  };
-
-  const formatTimeAgo = (dateStr) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
-  };
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    let observer = null
+    const timer = setTimeout(() => {
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries[0].isIntersecting) return
+          loadMore()
+        },
+        { rootMargin: '200px', threshold: 0 }
+      )
+      observer.observe(el)
+    }, 800)
+    return () => {
+      clearTimeout(timer)
+      if (observer) observer.disconnect()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleLikeToggle = async (postId) => {
-    // Dummy posts have short IDs like "d1", "d2" — only toggle locally
-    const isDummy = postId.length < 10;
+    const isDummy = postId.length < 10
     if (isDummy) {
-      setLikedPosts((prev) => {
-        const updated = new Set(prev);
-        updated.has(postId) ? updated.delete(postId) : updated.add(postId);
-        return updated;
-      });
       setPosts((prev) =>
-        prev.map((p) =>
-          p._id === postId
-            ? {
-                ...p,
-                likes: likedPosts.has(postId)
-                  ? p.likes.filter((id) => id !== currentUserId)
-                  : [...p.likes, currentUserId],
-              }
-            : p
-        )
-      );
-      return;
+        prev.map((p) => {
+          if (p._id !== postId) return p
+          const alreadyLiked = p.likes.some(
+            (l) =>
+              l?.userId?.toString() === currentUserId ||
+              l?.toString() === currentUserId ||
+              l === currentUserId
+          )
+          return {
+            ...p,
+            likes: alreadyLiked
+              ? p.likes.filter((l) => l !== currentUserId)
+              : [...p.likes, currentUserId],
+          }
+        })
+      )
+      return
     }
 
+    // Optimistic update — flip immediately, reconcile after server responds
+    const alreadyLiked = (posts.find((p) => p._id === postId)?.likes || []).some(
+      (l) => l?.userId?.toString() === currentUserId || l?.toString() === currentUserId || l === currentUserId
+    )
+    setPosts((prev) =>
+      prev.map((p) =>
+        p._id === postId
+          ? {
+              ...p,
+              likes: alreadyLiked
+                ? p.likes.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId)
+                : [...p.likes, { userId: currentUserId }],
+            }
+          : p
+      )
+    )
+
     try {
-      const res = await fetch("http://localhost:5002/likes", {
-        method: "POST",
+      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ postId }),
-      });
-      const data = await res.json();
-      const liked = data.liked;
+      })
+      const data = await res.json()
+      const liked = data.liked
+      // Reconcile with server truth only if it differs from our optimistic guess
+      if (liked === alreadyLiked) {
+        setPosts((prev) =>
+          prev.map((p) =>
+            p._id === postId
+              ? {
+                  ...p,
+                  likes: liked
+                    ? [...p.likes.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId), { userId: currentUserId }]
+                    : p.likes.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId),
+                }
+              : p
+          )
+        )
+      }
+    } catch (err) {
+      // Roll back optimistic update on network failure
       setPosts((prev) =>
         prev.map((p) =>
           p._id === postId
             ? {
                 ...p,
-                likes: liked
-                  ? [...p.likes, currentUserId]
-                  : p.likes.filter((id) => id !== currentUserId),
+                likes: alreadyLiked
+                  ? [...p.likes, { userId: currentUserId }]
+                  : p.likes.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId),
               }
             : p
         )
-      );
-      setLikedPosts((prev) => {
-        const updated = new Set(prev);
-        liked ? updated.add(postId) : updated.delete(postId);
-        return updated;
-      });
-    } catch (err) {
-      console.error("Like error", err);
+      )
+      toast.error('Failed to update like')
     }
-  };
+  }
 
-  const toggleComments = (postId) => {
-    setCommentsVisible((prev) => ({ ...prev, [postId]: !prev[postId] }));
-  };
-
-  const handleAddComment = async (postId) => {
-    const text = newComment[postId]?.trim();
-    if (!text) return;
+  const handleAddComment = async (postId, text, parentId = null) => {
+    if (!text?.trim()) return
     try {
-      const res = await fetch("http://localhost:5002/comments", {
-        method: "POST",
+      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ postId, text }),
-      });
-      const data = await res.json();
-      const entry = data.comment || { userId: currentUserId, text, createdAt: new Date().toISOString() };
+        body: JSON.stringify({ postId, text: text.trim(), parentId }),
+      })
+      const data = await res.json()
+      const entry = data.comment || {
+        _id: Date.now().toString(),
+        userId: currentUserId,
+        text: text.trim(),
+        parentId,
+        likes: [],
+        createdAt: new Date().toISOString(),
+      }
       setPosts((prev) =>
         prev.map((p) =>
-          p._id === postId ? { ...p, comments: [...p.comments, entry] } : p
+          p._id === postId ? { ...p, comments: [...(p.comments || []), entry] } : p
         )
-      );
-      setNewComment((prev) => ({ ...prev, [postId]: "" }));
-    } catch (err) {
-      console.error("Comment error", err);
+      )
+    } catch {
+      toast.error('Failed to post comment')
     }
-  };
+  }
 
-  const handleDelete = async (postId) => {
-    const token = localStorage.getItem("token");
-    if (!window.confirm("Delete this post?")) return;
-    try {
-      const res = await fetch(`http://localhost:5002/posts/${postId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        setPosts((prev) => prev.filter((p) => p._id !== postId));
-      } else {
-        alert("Failed to delete post.");
-      }
-    } catch (err) {
-      console.error("Delete error", err);
-      alert("Error deleting post.");
-    }
-  };
+  const handleDelete = (postId) => {
+    setConfirmModal({
+      title: 'Delete post?',
+      message: 'This action cannot be undone. The post and all its likes and comments will be permanently removed.',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${CONTENT_SERVICE}/posts/${postId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (res.ok) {
+            setPosts((prev) => prev.filter((p) => p._id !== postId))
+            toast.success('Post deleted')
+          } else {
+            toast.error('Failed to delete post')
+          }
+        } catch {
+          toast.error('Network error while deleting')
+        }
+      },
+    })
+  }
 
-  // Compose all locations from dummyData.js locations + dummyPosts + real posts
-  const dummyPostLocations = dummyPosts
-    .map((p) => p.location?.trim().toLowerCase())
-    .filter(Boolean);
+  const toggleComments = (postId) =>
+    setCommentsVisible((prev) => ({ ...prev, [postId]: !prev[postId] }))
 
-  const realLocations = posts
-    .map((p) => p.location?.trim().toLowerCase())
-    .filter(Boolean);
+  // Build locations list
+  const allLocations = Array.from(
+    new Set([
+      ...locations.map((l) => l.trim()),
+      ...dummyPosts.map((p) => p.location?.trim()).filter(Boolean),
+      ...posts.map((p) => p.location?.trim()).filter(Boolean),
+    ])
+  ).sort()
 
-  const masterLocations = locations.map((loc) => loc.trim().toLowerCase());
-
-  const uniqueLocationsSet = new Set([
-    ...masterLocations,
-    ...dummyPostLocations,
-    ...realLocations,
-  ]);
-
-  const allLocations = Array.from(uniqueLocationsSet).map(
-    (loc) => loc.charAt(0).toUpperCase() + loc.slice(1)
-  );
-
-  // Filter posts by location filter (case-insensitive substring match)
-  const filteredPosts = posts.filter((post) =>
-    locationFilter.trim() === ""
+  // Filter logic
+  const myPosts = posts.filter(
+    (p) => p.userId === currentUserId || p.userId?.toString() === currentUserId
+  )
+  const followingPosts = posts.filter(
+    (p) => followingIds.includes(p.userId?.toString())
+  )
+  const basePosts =
+    activeTab === 'mine'      ? myPosts :
+    activeTab === 'following' ? followingPosts :
+    posts
+  const filteredPosts = basePosts.filter((p) =>
+    locationFilter.trim() === ''
       ? true
-      : post.location?.toLowerCase().includes(locationFilter.toLowerCase())
-  );
+      : p.location?.toLowerCase().includes(locationFilter.toLowerCase())
+  )
 
   return (
-    <div style={{ maxWidth: 700, margin: "30px auto", padding: 20 }}>
-      <h1 style={{ textAlign: "center", marginBottom: 20 }}>🌍 Travel Feed</h1>
-
-      {/* Location search input */}
-      <div style={{ marginBottom: 20 }}>
-        <input
-          type="text"
-          placeholder="Search by location..."
-          list="locations-list"
-          value={locationFilter}
-          autoComplete="off"
-          onChange={(e) => setLocationFilter(e.target.value)}
+    <div className="page">
+      {/* Header */}
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 50,
+          background: 'var(--surface-page)',
+          borderBottom: '1px solid var(--border-subtle)',
+        }}
+      >
+        <div
           style={{
-            width: "100%",
-            padding: 10,
-            borderRadius: 8,
-            border: "1px solid #ccc",
-            fontSize: 16,
+            maxWidth: 'var(--content-max-width)',
+            margin: '0 auto',
+            padding: '12px var(--content-padding)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
           }}
-        />
-        <datalist id="locations-list">
-          {allLocations.map((loc) => (
-            <option key={loc} value={loc} />
-          ))}
-        </datalist>
-      </div>
-
-      {filteredPosts.length === 0 ? (
-        <p>No posts found for this location.</p>
-      ) : (
-        filteredPosts.map((post) => {
-          const user = getUserById(post.userId);
-          // Log each post user info for debugging
-          console.log("Post by:", post.userId, "Resolved username:", user?.username);
-          const isOwner = post.userId === currentUserId;
-          const isLiked = likedPosts.has(post._id);
-
-          return (
-            <div
-              key={post._id}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            <Compass size={22} color="var(--brand-500)" />
+            <h1
               style={{
-                border: "1px solid #ddd",
-                borderRadius: 12,
-                padding: 15,
-                marginBottom: 30,
-                backgroundColor: "white",
-                boxShadow: "0 2px 6px rgba(0,0,0,0.1)",
+                fontFamily: 'var(--font-serif)',
+                fontSize: 'var(--text-xl)',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.02em',
+                margin: 0,
               }}
             >
-              <div
-                style={{ display: "flex", alignItems: "center", marginBottom: 10 }}
-              >
-                <img
-                  src={`https://api.dicebear.com/7.x/thumbs/svg?seed=${
-                    user?.username || "user"
-                  }`}
-                  alt="avatar"
-                  onError={(e) => {
-                    e.target.onerror = null;
-                    e.target.src = "https://via.placeholder.com/40?text=U";
-                  }}
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: "50%",
-                    marginRight: 10,
-                  }}
-                />
-                <div>
-                  <strong>@{isOwner ? "you" : user?.username}</strong>
-                  <div style={{ fontSize: 12, color: "#888" }}>
-                    {formatTimeAgo(post.createdAt)}
-                  </div>
-                </div>
-              </div>
+              Wandr
+            </h1>
+          </div>
 
-              <img
-                src={post.image}
-                onError={(e) => {
-                  e.target.onerror = null;
-                  e.target.src =
-                    "https://via.placeholder.com/400x300?text=Image+not+found";
-                }}
-                style={{ width: "100%", borderRadius: 10, marginBottom: 10 }}
-                alt="Post"
-              />
-
-              {/* Show caption */}
-              <p style={{ fontSize: 15 }}>
-                {post.caption?.split("📍")[0]?.trim()}
-              </p>
-              {/* Show location separately */}
-              <p style={{ fontSize: 13, fontWeight: "bold", color: "#555" }}>
-                📍 {post.location || "Unknown location"}
-              </p>
-
-              <div
+          {/* Tabs */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 4,
+              background: 'var(--neutral-100)',
+              borderRadius: 'var(--radius-full)',
+              padding: 3,
+            }}
+          >
+            {[
+              ['all',       <Globe size={13} key="g" />,   'Feed'],
+              ['following', <Users size={13} key="u" />,   'Following'],
+              ['mine',      null,                           'Mine'],
+            ].map(([tab, icon, label]) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 10,
+                  padding: '5px 12px',
+                  borderRadius: 'var(--radius-full)',
+                  border: 'none',
+                  background:
+                    activeTab === tab ? 'var(--neutral-0)' : 'transparent',
+                  color:
+                    activeTab === tab
+                      ? 'var(--text-primary)'
+                      : 'var(--text-muted)',
+                  fontSize: 'var(--text-sm)',
+                  fontWeight: 'var(--weight-semibold)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  boxShadow: activeTab === tab ? 'var(--shadow-xs)' : 'none',
+                  fontFamily: 'var(--font-sans)',
                 }}
               >
-                <button
-                  onClick={() => handleLikeToggle(post._id)}
-                  style={{
-                    backgroundColor: isLiked ? "#e0245e" : "#eee",
-                    color: isLiked ? "white" : "#333",
-                    border: "none",
-                    borderRadius: 6,
-                    padding: "6px 12px",
-                    cursor: "pointer",
-                  }}
-                >
-                  {isLiked ? "♥ Liked" : "♡ Like"} ({post.likes.length})
-                </button>
-                <span
-                  onClick={() => toggleComments(post._id)}
-                  style={{ color: "#0077cc", fontSize: 14, cursor: "pointer" }}
-                >
-                  {commentsVisible[post._id] ? "Hide" : "View"}{" "}
-                  {post.comments.length} comment
-                  {post.comments.length !== 1 ? "s" : ""}
-                </span>
+                {icon}
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-                {isOwner && (
-                  <>
-                    <button
-                      onClick={() => setEditingPost(post)}
-                      style={{
-                        padding: "5px 10px",
-                        background: "#f0ad4e",
-                        border: "none",
-                        color: "white",
-                        borderRadius: 6,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(post._id)}
-                      style={{
-                        padding: "5px 10px",
-                        background: "#d9534f",
-                        border: "none",
-                        color: "white",
-                        borderRadius: 6,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </>
-                )}
-              </div>
+        {/* Filter bar */}
+        <div
+          style={{
+            maxWidth: 'var(--content-max-width)',
+            margin: '0 auto',
+            padding: '0 var(--content-padding) 12px',
+          }}
+        >
+          <div className="filter-bar">
+            <Search size={16} className="search-icon" />
+            <input
+              className="filter-input"
+              type="text"
+              placeholder="Filter by destination…"
+              list="locations-list"
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+              autoComplete="off"
+            />
+            {locationFilter && (
+              <button
+                onClick={() => setLocationFilter('')}
+                style={{
+                  position: 'absolute',
+                  right: 14,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  fontSize: 'var(--text-xs)',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <datalist id="locations-list">
+            {allLocations.map((loc) => (
+              <option key={loc} value={loc} />
+            ))}
+          </datalist>
+        </div>
+      </header>
 
-              {commentsVisible[post._id] && (
-                <div style={{ marginBottom: 10 }}>
-                  {post.comments.map((c, i) => {
-                    const commenter = getUserById(c.userId?.toString());
-                    const isOwnComment = c.userId?.toString() === currentUserId;
-                    const commenterName = isOwnComment
-                      ? (localStorage.getItem("username") || "you")
-                      : (commenter?.username || "...");
-                    return (
-                      <div key={i} style={{ marginBottom: 6 }}>
-                        <strong>@{commenterName}</strong>
-                        : {c.text}
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: "#777",
-                            marginLeft: 6,
-                          }}
-                        >
-                          {formatTimeAgo(c.createdAt || c.timestamp)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div style={{ display: "flex", marginTop: 10 }}>
-                <input
-                  type="text"
-                  placeholder="Write a comment..."
-                  value={newComment[post._id] || ""}
-                  onChange={(e) =>
-                    setNewComment({ ...newComment, [post._id]: e.target.value })
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleAddComment(post._id);
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: 8,
-                    border: "1px solid #ccc",
-                    borderRadius: 6,
-                    fontSize: 14,
-                  }}
-                />
-                <button
-                  onClick={() => handleAddComment(post._id)}
-                  disabled={!newComment[post._id]?.trim()}
-                  style={{
-                    marginLeft: 8,
-                    backgroundColor: "#0077cc",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 6,
-                    padding: "8px 12px",
-                    cursor: newComment[post._id]?.trim()
-                      ? "pointer"
-                      : "not-allowed",
-                  }}
-                >
-                  Post
-                </button>
-              </div>
+      {/* Content */}
+      <main className="page-content" style={{ paddingTop: 'var(--space-5)' }}>
+        {loading ? (
+          <div>
+            {[1, 2, 3].map((n) => (
+              <SkeletonCard key={n} />
+            ))}
+          </div>
+        ) : filteredPosts.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <MapPin size={28} />
             </div>
-          );
-        })
-      )}
+            <h3>
+              {locationFilter
+                ? `No posts from "${locationFilter}"`
+                : 'No posts yet'}
+            </h3>
+            <p>
+              {locationFilter
+                ? 'Try a different destination or clear the filter.'
+                : activeTab === 'mine'
+                  ? "You haven't posted anything yet. Share your first adventure!"
+                  : activeTab === 'following'
+                    ? "You're not following anyone yet. Visit a profile and hit Follow!"
+                    : 'Be the first to share a travel story!'}
+            </p>
+            {locationFilter && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => setLocationFilter('')}
+              >
+                Clear filter
+              </button>
+            )}
+          </div>
+        ) : (
+          filteredPosts.map((post) => (
+            <PostCard
+              key={post._id}
+              post={post}
+              currentUserId={currentUserId}
+              token={token}
+              userCache={userCache}
+              onLike={handleLikeToggle}
+              onAddComment={handleAddComment}
+              onEdit={setEditingPost}
+              onDelete={handleDelete}
+              onToggleComments={toggleComments}
+              commentsVisible={commentsVisible}
+            />
+          ))
+        )}
+
+        {/* Infinite scroll sentinel */}
+        <div ref={sentinelRef} style={{ height: 1 }} />
+
+        {loadingMore && (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0 32px' }}>
+            <div className="spinner spinner-dark" style={{ width: 24, height: 24, borderWidth: 3 }} />
+          </div>
+        )}
+
+        {!loading && !loadingMore && !hasMoreRef.current && posts.length > 0 && (
+          <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--text-sm)', padding: '16px 0 32px' }}>
+            You've seen all posts ✦
+          </p>
+        )}
+      </main>
 
       {editingPost && (
         <EditPostModal
@@ -473,14 +938,19 @@ const Feed = () => {
           allLocations={allLocations}
           onSave={(updatedPost) => {
             setPosts((prev) =>
-              prev.map((p) => (p._id === updatedPost._id ? updatedPost : p))
-            );
-            setEditingPost(null);
+              prev.map((p) =>
+                p._id === updatedPost._id ? { ...p, ...updatedPost } : p
+              )
+            )
+            setEditingPost(null)
+            toast.success('Post updated')
           }}
         />
       )}
-    </div>
-  );
-};
 
-export default Feed;
+      <ConfirmModal config={confirmModal} onClose={() => setConfirmModal(null)} />
+    </div>
+  )
+}
+
+export default Feed

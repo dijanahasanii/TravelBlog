@@ -1,23 +1,23 @@
-import React, { useEffect, useState } from "react";
-import { fetchNotifications } from "../api";
+import React, { useEffect, useState } from 'react'
+import { fetchNotifications } from '../api'
 
 const Notifications = ({ token, currentUserId }) => {
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState([])
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const data = await fetchNotifications(token);
-        setNotifications(data);
+        const data = await fetchNotifications(token)
+        setNotifications(data)
       } catch (err) {
-        console.error("Error fetching notifications:", err);
+        console.error('Error fetching notifications:', err)
       }
-    };
+    }
 
-    fetchData();
-    const interval = setInterval(fetchData, 10000); // Poll every 10s
-    return () => clearInterval(interval);
-  }, [token]);
+    fetchData()
+    const interval = setInterval(fetchData, 10000) // Poll every 10s
+    return () => clearInterval(interval)
+  }, [token])
 
   return (
     <div className="notifications">
@@ -25,13 +25,18 @@ const Notifications = ({ token, currentUserId }) => {
       {notifications.map((n) => (
         <div key={n._id}>
           <p>
-            <strong>{n.senderId?.fullName || "Someone"}</strong>{" "}
-            {n.type === "like" ? "liked" : n.type === "comment" ? "commented on" : "followed"} your post
+            <strong>{n.senderId?.fullName || 'Someone'}</strong>{' '}
+            {n.type === 'like'
+              ? 'liked'
+              : n.type === 'comment'
+                ? 'commented on'
+                : 'followed'}{' '}
+            your post
           </p>
         </div>
       ))}
     </div>
-  );
-};
+  )
+}
 
-export default Notifications;
+export default Notifications

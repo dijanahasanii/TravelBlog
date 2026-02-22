@@ -1,18 +1,18 @@
 // src/context/PostsContext.jsx
-import React, { createContext, useState } from 'react';
+import React, { createContext, useState } from 'react'
 
-export const PostsContext = createContext();
+export const PostsContext = createContext()
 
 export function PostsProvider({ children }) {
-  const [posts, setPosts] = useState([]);
+  const [posts, setPosts] = useState([])
 
   const addPost = (newPost) => {
-    setPosts(prev => [newPost, ...prev]);
-  };
+    setPosts((prev) => [newPost, ...prev])
+  }
 
   return (
     <PostsContext.Provider value={{ posts, addPost }}>
       {children}
     </PostsContext.Provider>
-  );
+  )
 }

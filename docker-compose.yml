@@ -1,64 +1,91 @@
 services:
   mongo:
-    image: mongo
-    container_name: mongo
+    image: mongo:7
+    container_name: wandr-mongo
     ports:
-      - "27017:27017"
+      - '27017:27017'
     volumes:
       - mongo-data:/data/db
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', 'db.adminCommand("ping")']
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   user-service:
     build: ./user-service
+    container_name: wandr-user-service
     ports:
-      - "5004:5004"
+      - '5004:5004'
     environment:
-      MONGO_URI: mongodb://mongo:27017/user-db
-      JWT_SECRET: dijana1
+      PORT: 5004
+      MONGO_URI: mongodb://mongo:27017/wandr-users
+      JWT_SECRET: ${JWT_SECRET:-wandr_jwt_secret_change_me}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-wandr_refresh_secret_change_me}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
   content-service:
     build: ./content-service
+    container_name: wandr-content-service
     ports:
-      - "5002:5002"
+      - '5002:5002'
     environment:
-      MONGO_URI: mongodb://mongo:27017/content-db
+      PORT: 5002
+      MONGO_URI: mongodb://mongo:27017/wandr-content
+      JWT_SECRET: ${JWT_SECRET:-wandr_jwt_secret_change_me}
     depends_on:
-      - mongo
-    restart: unless-stopped
-
-  location-service:
-    build: ./location-service
-    ports:
-      - "5003:5003"
-    environment:
-      MONGO_URI: mongodb://mongo:27017/location-db
-    depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
   notification-service:
     build: ./notification-service
+    container_name: wandr-notification-service
     ports:
-      - "5006:5006"
+      - '5006:5006'
     environment:
-      MONGO_URI: mongodb://mongo:27017/notification-db
+      PORT: 5006
+      MONGO_URI: mongodb://mongo:27017/wandr-notifications
+      JWT_SECRET: ${JWT_SECRET:-wandr_jwt_secret_change_me}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  location-service:
+    build: ./location-service
+    container_name: wandr-location-service
+    ports:
+      - '5003:5003'
+    environment:
+      PORT: 5003
+      MONGO_URI: mongodb://mongo:27017/wandr-locations
+    depends_on:
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
     build: ./frontend
+    container_name: wandr-frontend
     ports:
-      - "3000:3000"
-    stdin_open: true
-    tty: true
+      - '3000:3000'
+    environment:
+      REACT_APP_USER_SERVICE_URL: http://localhost:5004
+      REACT_APP_CONTENT_SERVICE_URL: http://localhost:5002
+      REACT_APP_NOTIFICATION_SERVICE_URL: http://localhost:5006
+      CHOKIDAR_USEPOLLING: 'true'
     depends_on:
       - user-service
       - content-service
-      - location-service
+      - notification-service
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
 
 volumes:
   mongo-data:

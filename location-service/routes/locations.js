@@ -1,11 +1,11 @@
-const express = require("express");
-const router = express.Router();
+const express = require('express')
+const router = express.Router()
 const {
   getLocations,
-  addLocation
-} = require("../controllers/locationController");
+  addLocation,
+} = require('../controllers/locationController')
 
-router.get("/", getLocations);
-router.post("/", addLocation);
+router.get('/', getLocations)
+router.post('/', addLocation)
 
-module.exports = router;
+module.exports = router

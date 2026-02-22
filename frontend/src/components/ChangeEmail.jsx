@@ -1,67 +1,177 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useToast } from '../context/ToastContext'
+import { ArrowLeft, Mail, CheckCircle2 } from 'lucide-react'
+import { USER_SERVICE } from '../constants/api'
 
 export default function ChangeEmail() {
-  const [email, setEmail] = useState('');
-  const [message, setMessage] = useState('');
-  const navigate = useNavigate();
+  const [email, setEmail] = useState('')
+  const [success, setSuccess] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+  const toast = useToast()
 
-  const handleEmailSubmit = async (e) => {
-    e.preventDefault();
-
+  const handleSubmit = async (e) => {
+    e.preventDefault()
     if (!email.includes('@')) {
-      setMessage('Please enter a valid email');
-      return;
+      toast.error('Please enter a valid email address.')
+      return
     }
 
-    const userId = localStorage.getItem("currentUserId");
-    const token = localStorage.getItem("token");
-
+    const userId = localStorage.getItem('currentUserId')
+    const token = localStorage.getItem('token')
+    setLoading(true)
     try {
-      const res = await fetch(`http://localhost:5004/users/${userId}`, {
-        method: "PATCH",
+      const res = await fetch(`${USER_SERVICE}/users/${userId}`, {
+        method: 'PATCH',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
+      })
+      const data = await res.json()
       if (res.ok) {
-        setMessage('Email updated successfully');
-        setEmail('');
+        setSuccess(true)
+        toast.success('Email updated successfully!')
+        setTimeout(() => navigate('/profile'), 2000)
       } else {
-        setMessage(data.message || 'Failed to update email');
+        toast.error(data.message || 'Failed to update email.')
       }
-    } catch (err) {
-      setMessage('Network error. Please try again.');
+    } catch {
+      toast.error('Network error. Please try again.')
+    } finally {
+      setLoading(false)
     }
-  };
+  }
 
   return (
-    <div style={{ maxWidth: 400, margin: 'auto' }}>
-      <h2>Change Email</h2>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--surface-page)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '32px var(--content-padding)',
+      }}
+    >
+      <div style={{ maxWidth: 440, width: '100%' }}>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => navigate('/profile')}
+          style={{
+            marginBottom: 24,
+            gap: 6,
+            color: 'var(--text-secondary)',
+            padding: '6px 10px',
+          }}
+        >
+          <ArrowLeft size={16} />
+          Back to Profile
+        </button>
 
-      <form onSubmit={handleEmailSubmit}>
-        <label>
-          New Email:
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="New email"
-            required
-            style={{ width: '100%', marginTop: 5, marginBottom: 10 }}
-          />
-        </label>
-        <button type="submit">Update Email</button>
-      </form>
+        <div
+          style={{
+            background: 'var(--surface-card)',
+            borderRadius: 'var(--radius-xl)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: 'var(--shadow-md)',
+            padding: '32px 28px',
+          }}
+        >
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <div
+              style={{
+                width: 52,
+                height: 52,
+                background: 'var(--brand-50)',
+                borderRadius: 'var(--radius-lg)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+                color: 'var(--brand-500)',
+                border: '1px solid var(--brand-100)',
+              }}
+            >
+              {success ? <CheckCircle2 size={24} /> : <Mail size={24} />}
+            </div>
+            <h1
+              style={{
+                fontFamily: 'var(--font-serif)',
+                fontSize: 'var(--text-2xl)',
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.02em',
+                marginBottom: 6,
+              }}
+            >
+              {success ? 'Email Updated!' : 'Change Email'}
+            </h1>
+            <p
+              style={{
+                fontSize: 'var(--text-sm)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {success
+                ? 'Redirecting you back to your profile…'
+                : 'Enter your new email address below.'}
+            </p>
+          </div>
 
-      {message && <p style={{ marginTop: 15, color: 'green' }}>{message}</p>}
+          {!success && (
+            <form
+              onSubmit={handleSubmit}
+              style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
+            >
+              <div className="form-group">
+                <label className="form-label">New Email Address</label>
+                <div style={{ position: 'relative' }}>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 13,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: 'var(--text-muted)',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <Mail size={16} />
+                  </div>
+                  <input
+                    className="form-input"
+                    type="email"
+                    placeholder="new@email.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    autoFocus
+                    style={{ paddingLeft: 38 }}
+                  />
+                </div>
+              </div>
 
-      <button onClick={() => navigate("/profile")} style={{ marginTop: 20 }}>
-        Back to Profile
-      </button>
+              <button
+                type="submit"
+                className="btn btn-primary btn-full"
+                disabled={loading || !email}
+                style={{ height: 48 }}
+              >
+                {loading ? (
+                  <>
+                    <span className="spinner" /> Updating…
+                  </>
+                ) : (
+                  'Update Email'
+                )}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
     </div>
-  );
+  )
 }

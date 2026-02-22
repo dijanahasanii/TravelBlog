@@ -2,14 +2,14 @@
 const eventBus = {
   callbacks: {},
   on(event, cb) {
-    if (!this.callbacks[event]) this.callbacks[event] = [];
-    this.callbacks[event].push(cb);
+    if (!this.callbacks[event]) this.callbacks[event] = []
+    this.callbacks[event].push(cb)
   },
   emit(event, payload) {
     if (this.callbacks[event]) {
-      this.callbacks[event].forEach((cb) => cb(payload));
+      this.callbacks[event].forEach((cb) => cb(payload))
     }
   },
-};
+}
 
-export default eventBus;
+export default eventBus

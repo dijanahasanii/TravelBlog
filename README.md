@@ -6,16 +6,16 @@ This is a microservices-based travel blog platform built as the final project fo
 
 ## Table of Contents
 
-- [Project Overview](#project-overview)  
-- [Architecture](#architecture)  
-- [Technology Stack](#technology-stack)  
-- [Setup & Running Locally](#setup--running-locally)  
-- [Services & API Endpoints](#services--api-endpoints)  
-- [Environment Variables](#environment-variables)  
-- [Security](#security)  
-- [Testing](#testing)  
-- [Known Issues](#known-issues)  
-- [Future Improvements](#future-improvements)  
+- [Project Overview](#project-overview)
+- [Architecture](#architecture)
+- [Technology Stack](#technology-stack)
+- [Setup & Running Locally](#setup--running-locally)
+- [Services & API Endpoints](#services--api-endpoints)
+- [Environment Variables](#environment-variables)
+- [Security](#security)
+- [Testing](#testing)
+- [Known Issues](#known-issues)
+- [Future Improvements](#future-improvements)
 - [Team](#team)
 
 ---
@@ -30,23 +30,23 @@ This platform allows users to create accounts, post travel experiences with phot
 
 ![Architecture Diagram](./docs/architecture-diagram.png)
 
-- **User Service:** Handles user authentication, registration, and profiles  
-- **Content Service:** Manages posts with images, captions, and location data  
-- **Location Service:** Provides location data and related queries  
-- **Notification Service:** Manages user notifications  
+- **User Service:** Handles user authentication, registration, and profiles
+- **Content Service:** Manages posts with images, captions, and location data
+- **Location Service:** Provides location data and related queries
+- **Notification Service:** Manages user notifications
 - **Frontend:** React SPA interacting with backend services via REST APIs
 
 ---
 
 ## Technology Stack
 
-| Layer            | Technology            |
-|------------------|------------------------|
-| Frontend         | React.js              |
-| Backend          | Node.js, Express      |
-| Database         | MongoDB               |
-| Containerization | Docker, Docker Compose|
-| Authentication   | JWT (JSON Web Tokens) |
+| Layer            | Technology             |
+| ---------------- | ---------------------- |
+| Frontend         | React.js               |
+| Backend          | Node.js, Express       |
+| Database         | MongoDB                |
+| Containerization | Docker, Docker Compose |
+| Authentication   | JWT (JSON Web Tokens)  |
 
 ---
 
@@ -54,7 +54,7 @@ This platform allows users to create accounts, post travel experiences with phot
 
 ### Prerequisites
 
-- Docker & Docker Compose installed  
+- Docker & Docker Compose installed
 - Git installed
 
 ### Clone repository
@@ -84,32 +84,32 @@ http://localhost:3000
 
 ### User Service (http://localhost:5004)
 
-| Endpoint             | Method | Description                |
-|----------------------|--------|----------------------------|
-| `/api/auth/signup`   | POST   | Register new user          |
-| `/api/auth/login`    | POST   | User login and JWT issuance|
-| `/api/users/:id`     | GET    | Get user profile by ID     |
+| Endpoint           | Method | Description                 |
+| ------------------ | ------ | --------------------------- |
+| `/api/auth/signup` | POST   | Register new user           |
+| `/api/auth/login`  | POST   | User login and JWT issuance |
+| `/api/users/:id`   | GET    | Get user profile by ID      |
 
 ### Content Service (http://localhost:5002)
 
-| Endpoint         | Method | Description         |
-|------------------|--------|---------------------|
-| `/posts`         | GET    | Get posts feed      |
-| `/posts`         | POST   | Create new post     |
-| `/posts/:id`     | GET    | Get specific post   |
+| Endpoint     | Method | Description       |
+| ------------ | ------ | ----------------- |
+| `/posts`     | GET    | Get posts feed    |
+| `/posts`     | POST   | Create new post   |
+| `/posts/:id` | GET    | Get specific post |
 
 ### Location Service (http://localhost:5003)
 
-| Endpoint         | Method | Description         |
-|------------------|--------|---------------------|
-| `/locations`     | GET    | List all locations  |
+| Endpoint     | Method | Description        |
+| ------------ | ------ | ------------------ |
+| `/locations` | GET    | List all locations |
 
 ### Notification Service (http://localhost:5006)
 
-| Endpoint                | Method | Description                   |
-|-------------------------|--------|-------------------------------|
-| `/notifications`        | GET    | Fetch user notifications      |
-| `/notifications/mark`   | POST   | Mark notifications as read    |
+| Endpoint              | Method | Description                |
+| --------------------- | ------ | -------------------------- |
+| `/notifications`      | GET    | Fetch user notifications   |
+| `/notifications/mark` | POST   | Mark notifications as read |
 
 ---
 
@@ -129,40 +129,40 @@ PORT=5000
 
 ## Security
 
-- JWT authentication for protected routes  
-- Basic input validation and sanitization  
-- Environment variables used for secrets (no hardcoding)  
+- JWT authentication for protected routes
+- Basic input validation and sanitization
+- Environment variables used for secrets (no hardcoding)
 
 ---
 
 ## Testing
 
-- Manual testing through frontend and API tools like Postman  
+- Manual testing through frontend and API tools like Postman
 - Unit and integration tests (add if implemented)
 
 ---
 
 ## Known Issues
 
-- Notifications use polling instead of WebSockets  
-- Image uploads not compressed  
-- No email/phone verification  
+- Notifications use polling instead of WebSockets
+- Image uploads not compressed
+- No email/phone verification
 - No pagination in post feed
 
 ---
 
 ## Future Improvements
 
-- Implement role-based authorization  
-- Add automated tests  
-- CI/CD integration  
+- Implement role-based authorization
+- Add automated tests
+- CI/CD integration
 - Add caching layer and message queues
 
 ---
-## Code Commenting Summary
-Some parts of the codebase include comments to explain key functions and complex logic. Comments are placed inside source files near the relevant code, mainly using inline and JSDoc-style formats. While not every file is fully commented, the included comments aim to improve readability and help understand important parts of the project.
----
 
+## Code Commenting Summary
+
+## Some parts of the codebase include comments to explain key functions and complex logic. Comments are placed inside source files near the relevant code, mainly using inline and JSDoc-style formats. While not every file is fully commented, the included comments aim to improve readability and help understand important parts of the project.
 
 ## Team
 
