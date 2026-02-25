@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../utils/api'
 import { useToast } from '../context/ToastContext'
 import { uploadToCloudinary } from '../utils/cloudinary'
 import { USER_SERVICE } from '../constants/api'
@@ -69,7 +69,7 @@ export default function EditProfile() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await axios.get(`${USER_SERVICE}/users/${userId}`)
+        const res = await api.get(`${USER_SERVICE}/users/${userId}`)
         const d   = res.data
         setFormData({
           fullName: d.fullName || '',
@@ -128,11 +128,7 @@ export default function EditProfile() {
   }
 
   const saveAvatarToServer = async (avatarData) => {
-    await axios.patch(
-      `${USER_SERVICE}/users/${userId}`,
-      { avatar: avatarData },
-      { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
-    )
+    await api.patch(`${USER_SERVICE}/users/${userId}`, { avatar: avatarData })
     // Persist in localStorage so it shows immediately everywhere
     const stored = JSON.parse(localStorage.getItem('currentUser') || '{}')
     localStorage.setItem('currentUser', JSON.stringify({ ...stored, avatar: avatarData }))
@@ -149,9 +145,7 @@ export default function EditProfile() {
       const payload = { ...formData }
       if (avatarChanged) payload.avatar = previewAvatar ?? null
 
-      await axios.patch(`${USER_SERVICE}/users/${userId}`, payload, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-      })
+      await api.patch(`${USER_SERVICE}/users/${userId}`, payload)
 
       if (avatarChanged) {
         const stored = JSON.parse(localStorage.getItem('currentUser') || '{}')
@@ -181,11 +175,10 @@ export default function EditProfile() {
     if (password.new.length < 6)           { toast.error('Password must be at least 6 characters.'); return }
     setLoading(true)
     try {
-      await axios.patch(
-        `${USER_SERVICE}/users/${userId}`,
-        { currentPassword: password.current, newPassword: password.new },
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
-      )
+      await api.patch(`${USER_SERVICE}/users/${userId}`, {
+        currentPassword: password.current,
+        newPassword: password.new,
+      })
       toast.success('Password changed!')
       setPassword({ current: '', new: '', confirm: '' })
       navigate('/profile')

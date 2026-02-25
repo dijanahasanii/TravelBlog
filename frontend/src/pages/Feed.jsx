@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
-import { dummyUsers, dummyPosts, locations } from './dummyData'
+import api from '../utils/api'
+import { dummyUsers, dummyPosts } from './dummyData'
 import EditPostModal from '../components/EditPostModal'
 import ConfirmModal from '../components/ConfirmModal'
 import CommentThread from '../components/CommentThread'
@@ -9,6 +10,8 @@ import ImageCarousel from '../components/ImageCarousel'
 import VideoPlayer from '../components/VideoPlayer'
 import { formatTimeAgo } from '../utils/formatTime'
 import { getAvatarSrc, dicebearUrl, getCurrentUserAvatar } from '../utils/avatar'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
 import { useToast } from '../context/ToastContext'
 import {
   Heart,
@@ -27,7 +30,7 @@ import {
   Share2,
 } from 'lucide-react'
 
-// ── Bookmark helpers (localStorage) ──
+// ── Bookmark helpers (localStorage; not synced to backend) ──
 const BOOKMARKS_KEY = 'wandr_bookmarks'
 function getBookmarks() {
   try { return JSON.parse(localStorage.getItem(BOOKMARKS_KEY)) || [] } catch { return [] }
@@ -39,6 +42,25 @@ function toggleBookmark(postId) {
   saved.splice(idx, 1); localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(saved)); return false
 }
 function isBookmarked(postId) { return getBookmarks().includes(postId) }
+
+// ── Dummy post likes (localStorage; dummy posts don't exist in DB so we persist client-side) ──
+const DUMMY_LIKES_KEY = 'wandr_dummy_likes'
+function getDummyLikesByUser() {
+  try { return JSON.parse(localStorage.getItem(DUMMY_LIKES_KEY)) || {} } catch { return {} }
+}
+function getDummyLikesForUser(userId) {
+  return getDummyLikesByUser()[userId] || []
+}
+function toggleDummyLike(userId, postId) {
+  const byUser = getDummyLikesByUser()
+  const arr = byUser[userId] || []
+  const idx = arr.indexOf(postId)
+  if (idx === -1) arr.push(postId)
+  else arr.splice(idx, 1)
+  byUser[userId] = arr
+  localStorage.setItem(DUMMY_LIKES_KEY, JSON.stringify(byUser))
+  return idx === -1
+}
 
 // ── Skeleton card ──
 function SkeletonCard() {
@@ -427,14 +449,17 @@ const Feed = () => {
   const hasMoreRef     = useRef(true)
   const loadingMoreRef = useRef(false)
   const lastLoadRef    = useRef(0)
+  const commentingPostIdsRef = useRef(new Set())
 
   // Stable helper — never changes, safe to call from anywhere
   const enrichPosts = useRef(async (rawPosts) => {
     return Promise.all(rawPosts.map(async (p) => {
-      const [likesRes, commentsRes] = await Promise.all([
-        fetch(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => r.ok ? r.json() : []),
-        fetch(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => r.ok ? r.json() : []),
+      const [likesP, commentsP] = await Promise.all([
+        fetchWithTimeout(`${CONTENT_SERVICE}/likes/${p._id}`, { timeout: 8000 }).then(parseResponse),
+        fetchWithTimeout(`${CONTENT_SERVICE}/comments/${p._id}`, { timeout: 8000 }).then(parseResponse),
       ])
+      const likesRes = likesP.ok && Array.isArray(likesP.data) ? likesP.data : []
+      const commentsRes = commentsP.ok && Array.isArray(commentsP.data) ? commentsP.data : []
       return { ...p, createdAt: p.createdAt || new Date().toISOString(), likes: likesRes, comments: commentsRes }
     }))
   }).current
@@ -449,8 +474,8 @@ const Feed = () => {
     const fetched = {}
     await Promise.all(allIds.map(async (id) => {
       try {
-        const res = await fetch(`${USER_SERVICE}/users/${id}`)
-        if (res.ok) fetched[id] = await res.json()
+        const res = await fetchWithTimeout(`${USER_SERVICE}/users/${id}`, { timeout: 5000 }).then(parseResponse)
+        if (res.ok && res.data) fetched[id] = res.data
       } catch (_) {}
     }))
     if (Object.keys(fetched).length) setUserCache((prev) => ({ ...prev, ...fetched }))
@@ -465,9 +490,10 @@ const Feed = () => {
     setLoadingMore(true)
     const nextPage = pageRef.current + 1
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/posts?page=${nextPage}&limit=${PAGE_LIMIT}`)
-      if (res.ok) {
-        const data = await res.json()
+      const res = await fetchWithTimeout(`${CONTENT_SERVICE}/posts?page=${nextPage}&limit=${PAGE_LIMIT}`, { timeout: 10000 })
+      const parsed = await parseResponse(res)
+      if (parsed.ok && parsed.data != null) {
+        const data = parsed.data
         const raw  = Array.isArray(data) ? data : data.posts || []
         const more = Array.isArray(data) ? false : (data.hasMore || false)
         const enriched = await enrichPosts(raw)
@@ -480,7 +506,9 @@ const Feed = () => {
         pageRef.current    = nextPage
         hasMoreRef.current = more
       }
-    } catch (_) {}
+    } catch (err) {
+      toast.error(err?.name === 'AbortError' ? "Request timed out." : "Couldn't load more posts.")
+    }
     loadingMoreRef.current = false
     setLoadingMore(false)
   }).current
@@ -495,26 +523,34 @@ const Feed = () => {
       hasMoreRef.current = true
 
       try {
-        const fRes = await fetch(`${USER_SERVICE}/users/${currentUserId}/following-ids`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!cancelled && fRes.ok) setFollowingIds(await fRes.json())
-      } catch (_) {}
+        const res = await api.get(`${USER_SERVICE}/users/${currentUserId}/following-ids`)
+        if (!cancelled) setFollowingIds(res.data)
+      } catch (_) {
+        if (!cancelled) toast.error("Couldn't load your follow list.")
+      }
 
-      const dummyWithDates = dummyPosts.map((p) => ({ ...p, likes: p.likes || [], comments: p.comments || [] }))
+      const myDummyLikes = currentUserId ? getDummyLikesForUser(currentUserId) : []
+      const dummyWithDates = dummyPosts.map((p) => {
+        const baseLikes = p.likes || []
+        const withMine = myDummyLikes.includes(p._id)
+          ? [...baseLikes.filter((l) => l !== currentUserId && l?.userId?.toString() !== currentUserId), { userId: currentUserId }]
+          : baseLikes
+        return { ...p, likes: withMine, comments: p.comments || [] }
+      })
 
       let realPosts = []
       let backendHasMore = false
       try {
-        const res = await fetch(`${CONTENT_SERVICE}/posts?page=1&limit=${PAGE_LIMIT}`)
-        if (res.ok) {
-          const data = await res.json()
+        const res = await fetchWithTimeout(`${CONTENT_SERVICE}/posts?page=1&limit=${PAGE_LIMIT}`, { timeout: 10000 })
+        const parsed = await parseResponse(res)
+        if (parsed.ok && parsed.data != null) {
+          const data = parsed.data
           const raw  = Array.isArray(data) ? data : data.posts || []
           backendHasMore = Array.isArray(data) ? false : (data.hasMore || false)
           realPosts = await enrichPosts(raw)
         }
-      } catch (_) {
-        console.warn('Backend unavailable, showing sample posts')
+      } catch (err) {
+        if (!cancelled) toast.error(err?.name === 'AbortError' ? "Request timed out." : "Couldn't load posts. Showing sample posts.")
       }
 
       if (cancelled) return
@@ -557,20 +593,15 @@ const Feed = () => {
   const handleLikeToggle = async (postId) => {
     const isDummy = postId.length < 10
     if (isDummy) {
+      const nowLiked = toggleDummyLike(currentUserId || '', postId)
       setPosts((prev) =>
         prev.map((p) => {
           if (p._id !== postId) return p
-          const alreadyLiked = p.likes.some(
-            (l) =>
-              l?.userId?.toString() === currentUserId ||
-              l?.toString() === currentUserId ||
-              l === currentUserId
-          )
           return {
             ...p,
-            likes: alreadyLiked
-              ? p.likes.filter((l) => l !== currentUserId)
-              : [...p.likes, currentUserId],
+            likes: nowLiked
+              ? [...(p.likes || []).filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId), { userId: currentUserId }]
+              : (p.likes || []).filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId),
           }
         })
       )
@@ -595,16 +626,9 @@ const Feed = () => {
     )
 
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ postId }),
-      })
-      const data = await res.json()
-      const liked = data.liked
+      const res = await api.post(`${CONTENT_SERVICE}/likes`, { postId })
+      const data = res.data
+      const liked = data?.liked
       // Reconcile with server truth only if it differs from our optimistic guess
       if (liked === alreadyLiked) {
         setPosts((prev) =>
@@ -621,7 +645,7 @@ const Feed = () => {
         )
       }
     } catch (err) {
-      // Roll back optimistic update on network failure
+      // Roll back optimistic update on network or 4xx/5xx failure
       setPosts((prev) =>
         prev.map((p) =>
           p._id === postId
@@ -634,23 +658,19 @@ const Feed = () => {
             : p
         )
       )
-      toast.error('Failed to update like')
+      const msg = err.response?.data?.message || err.response?.data?.error || 'Failed to update like'
+      toast.error(msg)
     }
   }
 
   const handleAddComment = async (postId, text, parentId = null) => {
     if (!text?.trim()) return
+    if (commentingPostIdsRef.current.has(postId)) return
+    commentingPostIdsRef.current.add(postId)
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ postId, text: text.trim(), parentId }),
-      })
-      const data = await res.json()
-      const entry = data.comment || {
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, { postId, text: text.trim(), parentId })
+      const data = res.data
+      const entry = data?.comment || {
         _id: Date.now().toString(),
         userId: currentUserId,
         text: text.trim(),
@@ -663,8 +683,11 @@ const Feed = () => {
           p._id === postId ? { ...p, comments: [...(p.comments || []), entry] } : p
         )
       )
-    } catch {
-      toast.error('Failed to post comment')
+    } catch (err) {
+      const msg = err.response?.data?.message || err.response?.data?.error || 'Failed to post comment'
+      toast.error(msg)
+    } finally {
+      commentingPostIdsRef.current.delete(postId)
     }
   }
 
@@ -675,18 +698,11 @@ const Feed = () => {
       confirmText: 'Delete',
       onConfirm: async () => {
         try {
-          const res = await fetch(`${CONTENT_SERVICE}/posts/${postId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (res.ok) {
-            setPosts((prev) => prev.filter((p) => p._id !== postId))
-            toast.success('Post deleted')
-          } else {
-            toast.error('Failed to delete post')
-          }
-        } catch {
-          toast.error('Network error while deleting')
+          await api.delete(`${CONTENT_SERVICE}/posts/${postId}`)
+          setPosts((prev) => prev.filter((p) => p._id !== postId))
+          toast.success('Post deleted')
+        } catch (err) {
+          toast.error(err.response?.data?.message || 'Failed to delete post')
         }
       },
     })
@@ -695,10 +711,9 @@ const Feed = () => {
   const toggleComments = (postId) =>
     setCommentsVisible((prev) => ({ ...prev, [postId]: !prev[postId] }))
 
-  // Build locations list
+  // Build locations list only from posts that have a location
   const allLocations = Array.from(
     new Set([
-      ...locations.map((l) => l.trim()),
       ...dummyPosts.map((p) => p.location?.trim()).filter(Boolean),
       ...posts.map((p) => p.location?.trim()).filter(Boolean),
     ])

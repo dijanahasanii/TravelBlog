@@ -1,9 +1,9 @@
-import { USER_SERVICE, CONTENT_SERVICE } from './constants/api'
+import { USER_SERVICE, CONTENT_SERVICE, NOTIF_SERVICE } from './constants/api'
 
 const BASE_URL = {
   posts:     CONTENT_SERVICE,
   users:     USER_SERVICE,
-  locations: 'http://localhost:5003',
+  locations: process.env.REACT_APP_LOCATION_SERVICE_URL || 'http://localhost:5003',
 }
 
 // 🔁 POST routes
@@ -76,7 +76,7 @@ export const getUserPosts = async (userId) => {
 }
 
 export const fetchNotifications = async (token) => {
-  const res = await fetch(`${CONTENT_SERVICE}/notifications`, {
+  const res = await fetch(`${NOTIF_SERVICE}/notifications`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -85,7 +85,7 @@ export const fetchNotifications = async (token) => {
 }
 
 export const createNotification = async (token, data) => {
-  const res = await fetch(`${CONTENT_SERVICE}/notifications`, {
+  const res = await fetch(`${NOTIF_SERVICE}/notifications`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

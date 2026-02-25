@@ -13,6 +13,7 @@ import React, { useState } from 'react'
 import { Heart, Reply, Send } from 'lucide-react'
 import { formatTimeAgo } from '../utils/formatTime'
 import { CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
 import { dicebearUrl, getCurrentUserAvatar } from '../utils/avatar'
 
 const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
@@ -63,11 +64,7 @@ function CommentRow({ comment, currentUserId, token, navigate, onReplyClick, dep
     )
 
     try {
-      const res = await fetch(
-        `${CONTENT_SERVICE}/comments/${comment._id}/like`,
-        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
-      )
-      if (!res.ok) throw new Error()
+      await api.post(`${CONTENT_SERVICE}/comments/${comment._id}/like`)
     } catch (_) {
       // Roll back
       setLikes((prev) =>

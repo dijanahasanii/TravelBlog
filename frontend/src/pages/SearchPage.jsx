@@ -6,6 +6,10 @@ import CommentThread from '../components/CommentThread'
 import ImageCarousel from '../components/ImageCarousel'
 import VideoPlayer from '../components/VideoPlayer'
 import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
+import { parseResponse } from '../utils/parseResponse'
+import { useToast } from '../context/ToastContext'
 import {
   Search, X, Users, FileText, MapPin,
   Heart, MessageCircle, ChevronDown, ChevronUp,
@@ -14,7 +18,7 @@ import {
 const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
 
 // ── Mini interactive post card used only in search results ──────────────────
-function SearchPostCard({ post, currentUserId, token, userCache, navigate }) {
+function SearchPostCard({ post, currentUserId, token, userCache, navigate, toast }) {
   const [likes,          setLikes]          = useState(post.likes || [])
   const [comments,       setComments]       = useState(post.comments || [])
   const [showComments,   setShowComments]   = useState(false)
@@ -40,13 +44,9 @@ function SearchPostCard({ post, currentUserId, token, userCache, navigate }) {
     )
 
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId: post._id }),
-      })
-      if (!res.ok) throw new Error()
+      await api.post(`${CONTENT_SERVICE}/likes`, { postId: post._id })
     } catch (_) {
+      toast?.error('Failed to update like')
       // Roll back
       setLikes((prev) =>
         alreadyLiked
@@ -59,14 +59,10 @@ function SearchPostCard({ post, currentUserId, token, userCache, navigate }) {
   const handleAddComment = async (text, parentId = null) => {
     if (!isRealId(post._id)) return
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId: post._id, text, parentId }),
-      })
-      const data = await res.json()
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, { postId: post._id, text, parentId })
+      const data = res.data
       const username = localStorage.getItem('username')
-      const entry = data.comment || {
+      const entry = data?.comment || {
         _id: Date.now().toString(),
         userId: currentUserId,
         text,
@@ -76,7 +72,7 @@ function SearchPostCard({ post, currentUserId, token, userCache, navigate }) {
         createdAt: new Date().toISOString(),
       }
       setComments((prev) => [...prev, entry])
-    } catch (_) {}
+    } catch (err) { toast?.error(err?.response?.data?.error || 'Failed to post comment') }
   }
 
   const goToAuthor = () => {
@@ -171,6 +167,7 @@ function SearchPostCard({ post, currentUserId, token, userCache, navigate }) {
 // ── Main Search Page ─────────────────────────────────────────────────────────
 export default function SearchPage() {
   const navigate    = useNavigate()
+  const toast       = useToast()
   const inputRef    = useRef(null)
   const debounceRef = useRef(null)
 
@@ -193,8 +190,8 @@ export default function SearchPage() {
     await Promise.all(
       ids.map(async (id) => {
         try {
-          const res = await fetch(`${USER_SERVICE}/users/${id}`)
-          if (res.ok) fetched[id] = await res.json()
+          const res = await api.get(`${USER_SERVICE}/users/${id}`)
+          if (res?.data) fetched[id] = res.data
         } catch (_) {}
       })
     )
@@ -207,32 +204,30 @@ export default function SearchPage() {
     setSearched(true)
     try {
       const [uRes, pRes] = await Promise.all([
-        fetch(`${USER_SERVICE}/users/search?q=${encodeURIComponent(q)}`),
-        fetch(`${CONTENT_SERVICE}/posts/search?q=${encodeURIComponent(q)}`),
+        fetchWithTimeout(`${USER_SERVICE}/users/search?q=${encodeURIComponent(q)}`, { timeout: 8000 }).then(parseResponse),
+        fetchWithTimeout(`${CONTENT_SERVICE}/posts/search?q=${encodeURIComponent(q)}`, { timeout: 8000 }).then(parseResponse),
       ])
-      const uData = uRes.ok ? await uRes.json() : []
-      const pRaw  = pRes.ok ? await pRes.json() : []
-
+      const uData = uRes.ok && Array.isArray(uRes.data) ? uRes.data : []
+      const pRaw  = pRes.ok && Array.isArray(pRes.data) ? pRes.data : []
       setUsers(uData)
-
-      // Enrich post results with likes + comments counts
       const enriched = await Promise.all(
         pRaw.map(async (p) => {
           const [likesRes, commentsRes] = await Promise.all([
-            fetch(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => r.ok ? r.json() : []),
-            fetch(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => r.ok ? r.json() : []),
+            api.get(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => Array.isArray(r?.data) ? r.data : []).catch(() => []),
+            api.get(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => Array.isArray(r?.data) ? r.data : []).catch(() => []),
           ])
           return { ...p, likes: likesRes, comments: commentsRes }
         })
       )
       setPosts(enriched)
       prefetchAuthors(enriched)
-    } catch (_) {
+    } catch (err) {
+      toast.error(err?.name === 'AbortError' ? 'Request timed out' : 'Search failed')
       setUsers([]); setPosts([])
     } finally {
       setLoading(false)
     }
-  }, [prefetchAuthors])
+  }, [prefetchAuthors, toast])
 
   const handleChange = (e) => {
     const val = e.target.value
@@ -377,6 +372,7 @@ export default function SearchPage() {
             {posts.map((p) => (
               <SearchPostCard
                 key={p._id}
+                toast={toast}
                 post={p}
                 currentUserId={currentUserId}
                 token={token}

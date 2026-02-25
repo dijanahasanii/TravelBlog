@@ -1,17 +1,3 @@
-export const locations = [
-  'Paris, France',
-  'New York, USA',
-  'Kyoto, Japan',
-  'Istanbul, Turkey',
-  'Santorini, Greece',
-  'Reykjavik, Iceland',
-  'Marrakech, Morocco',
-  'Cape Town, South Africa',
-  'Banff, Canada',
-  'Pristina, Kosovo',
-  'Shtime, Kosova',
-]
-
 export const dummyUsers = [
   {
     _id: 'u1',

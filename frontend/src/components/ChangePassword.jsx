@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import api from '../utils/api'
 import { useToast } from '../context/ToastContext'
 import { ArrowLeft, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
 import { USER_SERVICE } from '../constants/api'
@@ -31,31 +32,18 @@ export default function ChangePassword() {
     }
 
     const userId = localStorage.getItem('currentUserId')
-    const token = localStorage.getItem('token')
     setLoading(true)
-
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${userId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          currentPassword: current,
-          newPassword: newPass,
-        }),
+      await api.patch(`${USER_SERVICE}/users/${userId}`, {
+        currentPassword: current,
+        newPassword: newPass,
       })
-      const data = await res.json()
-      if (res.ok) {
-        setSuccess(true)
-        toast.success('Password changed!')
-        setTimeout(() => navigate('/profile'), 2000)
-      } else {
-        toast.error(data.message || 'Failed to change password.')
-      }
-    } catch {
-      toast.error('Network error. Please try again.')
+      setSuccess(true)
+      toast.success('Password changed!')
+      setTimeout(() => navigate('/profile'), 2000)
+    } catch (err) {
+      const msg = err.response?.data?.message
+      toast.error(msg || 'Failed to change password.')
     } finally {
       setLoading(false)
     }

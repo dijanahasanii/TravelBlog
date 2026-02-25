@@ -1,51 +1,45 @@
 import React, { useEffect, useState } from 'react'
 import { CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { useToast } from '../context/ToastContext'
 
 const CommentSection = ({ postId, currentUserId }) => {
+  const toast = useToast()
   const [comments, setComments] = useState([])
   const [newComment, setNewComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch(`${CONTENT_SERVICE}/comments/${postId}`)
-        const data = await res.json()
+        const res = await api.get(`${CONTENT_SERVICE}/comments/${postId}`)
+        const data = Array.isArray(res?.data) ? res.data : []
         if (!cancelled) setComments(data)
       } catch (err) {
-        if (!cancelled) console.error('❌ Failed to load comments:', err)
+        if (!cancelled) toast?.error('Failed to load comments')
       }
     }
     load()
     return () => { cancelled = true }
-  }, [postId])
+  }, [postId, toast])
 
   const handleCommentSubmit = async (e) => {
     e.preventDefault()
-    if (!newComment.trim()) return
-
+    if (!newComment.trim() || submitting) return
+    setSubmitting(true)
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          postId,
-          userId: currentUserId,
-          text: newComment.trim(),
-        }),
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, {
+        postId,
+        text: newComment.trim(),
       })
-
-      if (res.ok) {
-        const created = await res.json()
-        setComments((prev) => [...prev, created])
-        setNewComment('')
-      } else {
-        console.error('❌ Failed to post comment')
-      }
+      const created = res?.data?.comment || res?.data
+      if (created) setComments((prev) => [...prev, created])
+      setNewComment('')
     } catch (err) {
-      console.error('❌ Error posting comment:', err)
+      toast?.error(err?.response?.data?.error || 'Failed to post comment')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -72,12 +66,13 @@ const CommentSection = ({ postId, currentUserId }) => {
 
       <form onSubmit={handleCommentSubmit}>
         <input
+          disabled={submitting}
           type="text"
           placeholder="Add a comment..."
           value={newComment}
           onChange={(e) => setNewComment(e.target.value)}
         />
-        <button type="submit">Post</button>
+        <button type="submit" disabled={submitting}>Post</button>
       </form>
     </div>
   )

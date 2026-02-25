@@ -8,6 +8,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { Heart, MessageCircle, UserPlus, X } from 'lucide-react'
 import { getAvatarSrc, dicebearUrl } from '../utils/avatar'
 import { USER_SERVICE } from '../constants/api'
+import api from '../utils/api'
 
 const TYPE_CONFIG = {
   like:    { icon: Heart,          color: 'var(--color-like)',    bg: 'var(--color-like-bg)',  label: 'liked your post' },
@@ -51,8 +52,8 @@ export default function NotifPopup() {
 
       let actor = null
       try {
-        const res = await fetch(`${USER_SERVICE}/users/${notif.userId}`)
-        if (res.ok) actor = await res.json()
+        const res = await api.get(`${USER_SERVICE}/users/${notif.userId}`)
+        if (res?.data) actor = res.data
       } catch (_) {}
 
       addPopup(notif, actor)

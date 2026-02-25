@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
 
 export default function UserProfile({ userId, onBack }) {
   const [user, setUser] = useState(null)
@@ -10,21 +11,19 @@ export default function UserProfile({ userId, onBack }) {
   useEffect(() => {
     const fetchUserAndPosts = async () => {
       try {
-        const userRes = await fetch(`${USER_SERVICE}/users/${userId}`)
-        const postsRes = await fetch(
-          `${CONTENT_SERVICE}/posts/user/${userId}`
-        )
-        const userData = await userRes.json()
-        const postsData = await postsRes.json()
-        setUser(userData)
-        setUserPosts(postsData)
+        const [userRes, postsRes] = await Promise.all([
+          api.get(`${USER_SERVICE}/users/${userId}`),
+          api.get(`${CONTENT_SERVICE}/posts/user/${userId}`),
+        ])
+        setUser(userRes?.data ?? null)
+        setUserPosts(Array.isArray(postsRes?.data) ? postsRes.data : [])
       } catch (err) {
-        console.error('Failed to fetch user or posts:', err)
+        setUser(null)
+        setUserPosts([])
       } finally {
         setLoading(false)
       }
     }
-
     fetchUserAndPosts()
   }, [userId])
 

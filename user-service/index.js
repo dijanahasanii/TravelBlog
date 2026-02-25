@@ -8,12 +8,29 @@ const helmet = require('helmet')
 const mongoSanitize = require('express-mongo-sanitize')
 require('dotenv').config()
 
+// Fail fast with a clear message if required env is missing
+if (!process.env.MONGO_URI) {
+  console.error('❌ user-service: MONGO_URI is not set. Add it to user-service/.env')
+  process.exit(1)
+}
+if (!process.env.JWT_SECRET) {
+  console.error('❌ user-service: JWT_SECRET is not set. Add it to user-service/.env')
+  process.exit(1)
+}
+if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
+  console.error('❌ user-service: FRONTEND_URL is required in production (CORS). Set it in .env')
+  process.exit(1)
+}
+
 const User = require('./models/User')
 const userRoutes = require('./routes/userRoutes')
 
 const app = express()
 app.use(helmet())
-app.use(cors())
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : true,
+  credentials: true,
+}))
 app.use(express.json())
 app.use(mongoSanitize())
 
@@ -37,47 +54,42 @@ const generalLimiter = rateLimit({
 
 app.use('/login',            authLimiter)
 app.use('/register',         authLimiter)
+app.use('/api/auth/login',   authLimiter)
+app.use('/api/auth/signup',  authLimiter)
 app.use('/verify-identity',  authLimiter)
 app.use('/reset-password',   authLimiter)
 app.use('/refresh',          authLimiter)
 app.use(generalLimiter)
 
-// ✅ Optional welcome route
-app.get('/', (req, res) => {
-  res.send('User Service is running')
-})
+app.get('/', (req, res) => res.send('User Service is running'))
+app.get('/health', (req, res) => res.status(200).json({ ok: true, service: 'user-service' }))
 
 // Mount user routes
 app.use('/users', userRoutes)
 
-// ✅ MongoDB Connection
+// ✅ MongoDB Connection — start server only after DB is ready
+const PORT = process.env.PORT || 5004
 mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch((err) => console.error('❌ MongoDB connection failed:', err))
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 10000,
+    family: 4, // use IPv4; can avoid some TLS handshake issues
+  })
+  .then(() => {
+    console.log('✅ MongoDB connected')
+    app.listen(PORT, () => {
+      console.log(`🚀 user-service running on http://localhost:${PORT}`)
+    })
+  })
+  .catch((err) => {
+    console.error('❌ user-service: MongoDB connection failed:', err.message)
+    process.exit(1)
+  })
 
 // ── Token helpers ──
 function signAccess(id)   { return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '15m' }) }
 function signRefresh(id)  { return jwt.sign({ id }, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh', { expiresIn: '30d' }) }
 
-// ── REFRESH TOKEN ──
-app.post('/refresh', async (req, res) => {
-  const { refreshToken } = req.body
-  if (!refreshToken) return res.status(401).json({ message: 'No refresh token' })
-  try {
-    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh')
-    const user = await User.findById(payload.id).select('-password')
-    if (!user) return res.status(401).json({ message: 'User not found' })
-    const newAccessToken  = signAccess(user._id)
-    const newRefreshToken = signRefresh(user._id)
-    res.json({ token: newAccessToken, refreshToken: newRefreshToken })
-  } catch {
-    res.status(401).json({ message: 'Invalid or expired refresh token. Please sign in again.' })
-  }
-})
-
-// ✅ REGISTER
-app.post('/register', async (req, res) => {
+async function registerHandler(req, res) {
   try {
     const { username, password, fullName, email } = req.body
 
@@ -135,15 +147,26 @@ app.post('/register', async (req, res) => {
       error: err.message,
     })
   }
-})
+}
 
-// ✅ LOGIN
-app.post('/login', async (req, res) => {
+async function loginHandler(req, res) {
   try {
-    const { username, password } = req.body
+    const { username, password, email } = req.body || {}
 
-    const user = await User.findOne({ username })
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' })
+    }
+    if (!username && !email) {
+      return res.status(400).json({ error: 'Username or email is required' })
+    }
+
+    const user = await User.findOne(username ? { username } : { email })
     if (!user) return res.status(404).json({ error: 'User not found' })
+
+    if (!user.password) {
+      console.error('Login: user has no password hash', user._id)
+      return res.status(500).json({ error: 'Account error. Please reset your password.' })
+    }
 
     const isMatch = await bcrypt.compare(password, user.password)
     if (!isMatch) return res.status(401).json({ error: 'Invalid password' })
@@ -167,9 +190,34 @@ app.post('/login', async (req, res) => {
       },
     })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    console.error('Login error:', err)
+    res.status(500).json({ error: err.message || 'Login failed' })
+  }
+}
+
+// ── REFRESH TOKEN ──
+app.post('/refresh', async (req, res) => {
+  const { refreshToken } = req.body
+  if (!refreshToken) return res.status(401).json({ message: 'No refresh token' })
+  try {
+    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET + '_refresh')
+    const user = await User.findById(payload.id).select('-password')
+    if (!user) return res.status(401).json({ message: 'User not found' })
+    const newAccessToken  = signAccess(user._id)
+    const newRefreshToken = signRefresh(user._id)
+    res.json({ token: newAccessToken, refreshToken: newRefreshToken })
+  } catch {
+    res.status(401).json({ message: 'Invalid or expired refresh token. Please sign in again.' })
   }
 })
+
+// ✅ REGISTER (and /api/auth/signup for frontends that use that path)
+app.post('/register', registerHandler)
+app.post('/api/auth/signup', registerHandler)
+
+// ✅ LOGIN (and /api/auth/login for frontends that use that path)
+app.post('/login', loginHandler)
+app.post('/api/auth/login', loginHandler)
 
 // ── FORGOT PASSWORD (no email — verify username + email, then set new password) ──
 // Step 1: verify identity
@@ -218,7 +266,3 @@ app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' })
 })
 
-const PORT = process.env.PORT || 5004
-app.listen(PORT, () => {
-  console.log(`🚀 user-service running on http://localhost:${PORT}`)
-})

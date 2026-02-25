@@ -36,6 +36,10 @@ router.get('/', getAllPosts)
 
 // Get posts by a specific user
 router.get('/user/:userId', async (req, res) => {
+  const mongoose = require('mongoose')
+  if (!mongoose.Types.ObjectId.isValid(req.params.userId)) {
+    return res.status(400).json({ message: 'Invalid user ID' })
+  }
   try {
     const posts = await Post.find({ userId: req.params.userId })
       .sort({ createdAt: -1 })
@@ -68,15 +72,16 @@ router.put('/:postId', verifyToken, updatePost)
 
 // Delete a post
 router.delete('/:id', verifyToken, async (req, res) => {
+  const mongoose = require('mongoose')
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: 'Post not found' })
+  }
   try {
-    console.log('🔑 Decoded userId from token:', req.user.id)
     const post = await Post.findById(req.params.id)
 
     if (!post) {
       return res.status(404).json({ message: 'Post not found' })
     }
-
-    console.log('📌 Found post, owned by:', post.userId.toString())
 
     if (post.userId.toString() !== req.user.id.toString()) {
       return res.status(403).json({
@@ -93,11 +98,10 @@ router.delete('/:id', verifyToken, async (req, res) => {
       Like.deleteMany({ postId: req.params.id }),
       Comment.deleteMany({ postId: req.params.id }),
       axios
-        .delete(`http://localhost:5006/notifications/post/${req.params.id}`)
-        .catch(() => {}),
+        .delete(`${process.env.NOTIF_SERVICE_URL || 'http://localhost:5006'}/notifications/post/${req.params.id}`)
+        .catch((err) => console.error('[notify] delete notifications for post error:', err.message)),
     ])
 
-    console.log('✅ Post and related data deleted')
     res.json({ message: 'Post deleted successfully' })
   } catch (err) {
     console.error('❌ Error in DELETE /posts/:id:', err.message)

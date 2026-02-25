@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import axios from 'axios'
+import api from '../utils/api'
 import { useNavigate } from 'react-router-dom'
 import EditPostModal from '../components/EditPostModal'
 import FollowListModal from '../components/FollowListModal'
@@ -8,7 +8,6 @@ import CommentThread from '../components/CommentThread'
 import ImageCarousel from '../components/ImageCarousel'
 import VideoPlayer from '../components/VideoPlayer'
 import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
-import { locations } from './dummyData'
 import { formatTimeAgo } from '../utils/formatTime'
 import { getAvatarSrc, dicebearUrl } from '../utils/avatar'
 import { useToast } from '../context/ToastContext'
@@ -70,24 +69,18 @@ export default function Profile() {
     setLoading(true)
     try {
       const [userRes, postsRes, statsRes] = await Promise.all([
-        axios.get(`${USER_SERVICE}/users/${currentUserId}`),
-        axios.get(`${CONTENT_SERVICE}/posts/user/${currentUserId}`),
-        fetch(`${USER_SERVICE}/users/${currentUserId}/follow-stats`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }).then((r) => r.ok ? r.json() : { followers: 0, following: 0 }),
+        api.get(`${USER_SERVICE}/users/${currentUserId}`),
+        api.get(`${CONTENT_SERVICE}/posts/user/${currentUserId}`),
+        api.get(`${USER_SERVICE}/users/${currentUserId}/follow-stats`).then((r) => r.data).catch(() => ({ followers: 0, following: 0 })),
       ])
       setFollowStats({ followers: statsRes.followers || 0, following: statsRes.following || 0 })
       setUser(userRes.data)
 
       const enriched = await Promise.all(
-        postsRes.data.map(async (p) => {
+        (Array.isArray(postsRes.data) ? postsRes.data : postsRes.data?.posts || []).map(async (p) => {
           const [likesRes, commentsRes] = await Promise.all([
-            fetch(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) =>
-              r.ok ? r.json() : []
-            ),
-            fetch(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) =>
-              r.ok ? r.json() : []
-            ),
+            api.get(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => Array.isArray(r?.data) ? r.data : []).catch(() => []),
+            api.get(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => Array.isArray(r?.data) ? r.data : []).catch(() => []),
           ])
           const commentsWithNames = await Promise.all(
             commentsRes.map(async (c) => {
@@ -95,11 +88,8 @@ export default function Profile() {
                 return { ...c, username }
               }
               try {
-                const r = await fetch(`${USER_SERVICE}/users/${c.userId}`)
-                if (r.ok) {
-                  const u = await r.json()
-                  return { ...c, username: u.username }
-                }
+                const r = await api.get(`${USER_SERVICE}/users/${c.userId}`)
+                return { ...c, username: r.data?.username }
               } catch (_) {}
               return c
             })
@@ -123,7 +113,7 @@ export default function Profile() {
       )
       setLikedPosts(liked)
     } catch (err) {
-      console.error('Failed to load profile:', err)
+      toast.error(err?.response?.data?.message || 'Failed to load profile')
     } finally {
       setLoading(false)
     }
@@ -168,12 +158,7 @@ export default function Profile() {
     })
 
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId }),
-      })
-      if (!res.ok) throw new Error()
+      await api.post(`${CONTENT_SERVICE}/likes`, { postId })
     } catch {
       // Roll back on failure
       setPosts((prev) =>
@@ -200,16 +185,9 @@ export default function Profile() {
   const handleComment = async (postId, text, parentId = null) => {
     if (!text?.trim()) return
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ postId, text: text.trim(), parentId }),
-      })
-      const data = await res.json()
-      const entry = data.comment || {
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, { postId, text: text.trim(), parentId })
+      const data = res.data
+      const entry = data?.comment || {
         _id: Date.now().toString(),
         userId: currentUserId,
         text: text.trim(),
@@ -235,19 +213,12 @@ export default function Profile() {
       confirmText: 'Delete',
       onConfirm: async () => {
         try {
-          const res = await fetch(`${CONTENT_SERVICE}/posts/${postId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (res.ok) {
-            setPosts((prev) => prev.filter((p) => p._id !== postId))
-            localStorage.setItem('postsUpdatedAt', Date.now().toString())
-            toast.success('Post deleted')
-          } else {
-            toast.error('Failed to delete post')
-          }
-        } catch {
-          toast.error('Network error')
+          await api.delete(`${CONTENT_SERVICE}/posts/${postId}`)
+          setPosts((prev) => prev.filter((p) => p._id !== postId))
+          localStorage.setItem('postsUpdatedAt', Date.now().toString())
+          toast.success('Post deleted')
+        } catch (err) {
+          toast.error(err?.response?.data?.message || 'Failed to delete post')
         }
       },
     })
@@ -272,18 +243,20 @@ export default function Profile() {
     try {
       const results = await Promise.all(
         ids.map(async (id) => {
-          const [postRes, likesRes, commentsRes] = await Promise.all([
-            fetch(`${CONTENT_SERVICE}/posts/${id}`).then((r) => r.ok ? r.json() : null),
-            fetch(`${CONTENT_SERVICE}/likes/${id}`).then((r) => r.ok ? r.json() : []),
-            fetch(`${CONTENT_SERVICE}/comments/${id}`).then((r) => r.ok ? r.json() : []),
-          ])
-          if (!postRes) return null
-          return { ...postRes, likes: likesRes, comments: commentsRes }
+          try {
+            const [postRes, likesRes, commentsRes] = await Promise.all([
+              api.get(`${CONTENT_SERVICE}/posts/${id}`).then((r) => r?.data ?? null).catch(() => null),
+              api.get(`${CONTENT_SERVICE}/likes/${id}`).then((r) => Array.isArray(r?.data) ? r.data : []).catch(() => []),
+              api.get(`${CONTENT_SERVICE}/comments/${id}`).then((r) => Array.isArray(r?.data) ? r.data : []).catch(() => []),
+            ])
+            if (!postRes) return null
+            return { ...postRes, likes: likesRes, comments: commentsRes }
+          } catch (_) { return null }
         })
       )
       setSavedPosts(results.filter(Boolean))
     } catch (err) {
-      console.error('Failed to load saved posts:', err)
+      toast.error('Failed to load saved posts')
     } finally {
       setSavedLoading(false)
     }
@@ -862,7 +835,7 @@ export default function Profile() {
         <EditPostModal
           post={editingPost}
           onClose={() => setEditingPost(null)}
-          allLocations={locations}
+          allLocations={Array.from(new Set(posts.map((p) => p.location).filter(Boolean))).sort()}
           onSave={(updatedPost) => {
             setPosts((prev) =>
               prev.map((p) =>

@@ -4,8 +4,10 @@ const mongoose = require('mongoose')
 const axios = require('axios')
 
 exports.getCommentsForPost = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.postId)) {
+    return res.status(400).json({ error: 'Invalid post ID' })
+  }
   try {
-    // Return all comments for a post (top-level + replies), sorted oldest first
     const comments = await Comment.find({ postId: req.params.postId }).sort({ createdAt: 1 })
     res.json(comments)
   } catch (err) {
@@ -17,6 +19,9 @@ exports.addComment = async (req, res) => {
   try {
     const { postId, text, parentId } = req.body
     const userId = req.user.id
+    if (!postId || !mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({ error: 'Valid postId is required' })
+    }
 
     const newComment = new Comment({
       postId,
@@ -28,19 +33,21 @@ exports.addComment = async (req, res) => {
 
     const post = await Post.findById(postId)
     if (post && post.userId.toString() !== userId) {
-      axios.post('http://localhost:5006/notifications', {
-        targetUserId: post.userId.toString(),
-        userId,
-        postId,
-        type: 'comment',
-        commentText: text,
-        message: `User ${userId} commented: ${text}`,
-      }).catch(() => {})
+      axios
+        .post(`${process.env.NOTIF_SERVICE_URL || 'http://localhost:5006'}/notifications`, {
+          targetUserId: post.userId.toString(),
+          userId,
+          postId,
+          type: 'comment',
+          commentText: text,
+          message: `User ${userId} commented: ${text}`,
+        })
+        .catch((err) => console.error('[notify] sendNotification error:', err.message))
     }
 
     res.status(201).json({ message: 'Comment added', comment: newComment })
   } catch (err) {
-    console.error(err)
+    console.error('[comments] addComment error:', err.message)
     res.status(500).json({ error: err.message })
   }
 }
@@ -68,6 +75,7 @@ exports.toggleCommentLike = async (req, res) => {
 
     res.json({ liked: idx === -1, likeCount: comment.likes.length })
   } catch (err) {
+    console.error('[comments] toggleCommentLike error:', err.message)
     res.status(500).json({ error: err.message })
   }
 }

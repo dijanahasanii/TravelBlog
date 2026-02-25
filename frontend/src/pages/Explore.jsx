@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { getAvatarSrc, dicebearUrl, getCurrentUserAvatar } from '../utils/avatar'
 import { formatTimeAgo } from '../utils/formatTime'
 import { USER_SERVICE, CONTENT_SERVICE, NOTIF_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
+import { useToast } from '../context/ToastContext'
 import {
   Compass, TrendingUp, Users, MapPin,
   Heart, MessageCircle, Send, ChevronDown, ChevronUp,
@@ -12,7 +16,7 @@ import {
 const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
 
 // ── Trending post card (interactive) ─────────────────────────────────────────
-function TrendingPostCard({ post, currentUserId, token, author, navigate }) {
+function TrendingPostCard({ post, currentUserId, token, author, navigate, toast }) {
   const [likes,        setLikes]        = useState(post.likes || [])
   const [comments,     setComments]     = useState(post.comments || [])
   const [showComments, setShowComments] = useState(false)
@@ -36,19 +40,14 @@ function TrendingPostCard({ post, currentUserId, token, author, navigate }) {
     )
 
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId: post._id }),
-      })
-      if (!res.ok) throw new Error()
-    } catch (_) {
-      // Roll back
+      await api.post(`${CONTENT_SERVICE}/likes`, { postId: post._id })
+    } catch (err) {
       setLikes((prev) =>
         alreadyLiked
           ? [...prev, { userId: currentUserId }]
           : prev.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId)
       )
+      toast.error(err.response?.data?.error || 'Failed to update like')
     }
   }
 
@@ -58,19 +57,16 @@ function TrendingPostCard({ post, currentUserId, token, author, navigate }) {
     if (!text || submitting) return
     setSubmitting(true)
     try {
-      const res  = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId: post._id, text }),
-      })
-      const data = await res.json()
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, { postId: post._id, text })
+      const data = res.data
       setComments((prev) => [
         ...prev,
-        data.comment || { userId: currentUserId, text, username: localStorage.getItem('username'), createdAt: new Date().toISOString() },
+        data?.comment || { userId: currentUserId, text, username: localStorage.getItem('username'), createdAt: new Date().toISOString() },
       ])
       setNewComment('')
-    } catch (_) {}
-    finally { setSubmitting(false) }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to post comment')
+    } finally { setSubmitting(false) }
   }
 
   const goToAuthor = () => {
@@ -191,7 +187,7 @@ function TrendingPostCard({ post, currentUserId, token, author, navigate }) {
 }
 
 // ── Suggested user row ────────────────────────────────────────────────────────
-function SuggestedUser({ user, currentUserId, token, navigate }) {
+function SuggestedUser({ user, currentUserId, token, navigate, toast }) {
   const [following, setFollowing] = useState(false)
   const [busy,      setBusy]      = useState(false)
 
@@ -199,22 +195,16 @@ function SuggestedUser({ user, currentUserId, token, navigate }) {
     if (busy) return
     setBusy(true)
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${user._id}/follow`, {
-        method: following ? 'DELETE' : 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        setFollowing((v) => !v)
-        if (!following) {
-          fetch(`${NOTIF_SERVICE}/notifications`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: currentUserId, targetUserId: user._id, type: 'follow' }),
-          }).catch(() => {})
-        }
+      if (following) {
+        await api.delete(`${USER_SERVICE}/users/${user._id}/follow`)
+      } else {
+        await api.post(`${USER_SERVICE}/users/${user._id}/follow`)
+        api.post(`${NOTIF_SERVICE}/notifications`, { userId: currentUserId, targetUserId: user._id, type: 'follow' }).catch(() => {})
       }
-    } catch (_) {}
-    finally { setBusy(false) }
+      setFollowing((v) => !v)
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update follow')
+    } finally { setBusy(false) }
   }
 
   return (
@@ -254,6 +244,7 @@ function SuggestedUser({ user, currentUserId, token, navigate }) {
 // ── Main Explore Page ─────────────────────────────────────────────────────────
 export default function Explore() {
   const navigate      = useNavigate()
+  const toast         = useToast()
   const currentUserId = localStorage.getItem('currentUserId')
   const token         = localStorage.getItem('token')
 
@@ -266,30 +257,35 @@ export default function Explore() {
   const fetchExplore = useCallback(async () => {
     setLoading(true)
     try {
-      // Fetch recent posts (first 2 pages), sort by like count client-side
-      const [p1, p2, usersRes] = await Promise.all([
-        fetch(`${CONTENT_SERVICE}/posts?page=1&limit=20`).then((r) => r.ok ? r.json() : { posts: [] }),
-        fetch(`${CONTENT_SERVICE}/posts?page=2&limit=20`).then((r) => r.ok ? r.json() : { posts: [] }),
-        fetch(`${USER_SERVICE}/users/search?q=`).then((r) => r.ok ? r.json() : []),
+      const [r1, r2, rUsers] = await Promise.all([
+        fetchWithTimeout(`${CONTENT_SERVICE}/posts?page=1&limit=20`, { timeout: 10000 }).then(parseResponse),
+        fetchWithTimeout(`${CONTENT_SERVICE}/posts?page=2&limit=20`, { timeout: 10000 }).then(parseResponse),
+        fetchWithTimeout(`${USER_SERVICE}/users/search?q=`, { timeout: 10000 }).then(parseResponse),
       ])
+
+      const p1 = r1.ok && r1.data != null ? r1.data : { posts: [] }
+      const p2 = r2.ok && r2.data != null ? r2.data : { posts: [] }
+      const usersRes = rUsers.ok && Array.isArray(rUsers.data) ? rUsers.data : []
 
       const rawPosts = [
         ...(Array.isArray(p1) ? p1 : p1.posts || []),
         ...(Array.isArray(p2) ? p2 : p2.posts || []),
       ]
 
-      // Enrich with likes/comments
       const enriched = await Promise.all(
         rawPosts.map(async (p) => {
           const [likesRes, commentsRes] = await Promise.all([
-            fetch(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => r.ok ? r.json() : []),
-            fetch(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => r.ok ? r.json() : []),
+            fetchWithTimeout(`${CONTENT_SERVICE}/likes/${p._id}`, { timeout: 8000 }).then(parseResponse),
+            fetchWithTimeout(`${CONTENT_SERVICE}/comments/${p._id}`, { timeout: 8000 }).then(parseResponse),
           ])
-          return { ...p, likes: likesRes, comments: commentsRes }
+          return {
+            ...p,
+            likes: likesRes.ok && Array.isArray(likesRes.data) ? likesRes.data : [],
+            comments: commentsRes.ok && Array.isArray(commentsRes.data) ? commentsRes.data : [],
+          }
         })
       )
 
-      // Sort by likes desc, take top 10
       const sorted = enriched
         .filter((p) => isRealId(p._id))
         .sort((a, b) => (b.likes?.length || 0) - (a.likes?.length || 0))
@@ -297,30 +293,27 @@ export default function Explore() {
 
       setTrending(sorted)
 
-      // Prefetch authors
       const authorIds = [...new Set(sorted.map((p) => p.userId?.toString()).filter((id) => isRealId(id)))]
       const aMap = {}
       await Promise.all(
         authorIds.map(async (id) => {
           try {
-            const r = await fetch(`${USER_SERVICE}/users/${id}`)
-            if (r.ok) aMap[id] = await r.json()
+            const r = await fetchWithTimeout(`${USER_SERVICE}/users/${id}`, { timeout: 5000 }).then(parseResponse)
+            if (r.ok && r.data) aMap[id] = r.data
           } catch (_) {}
         })
       )
       setAuthorMap(aMap)
 
-      // Suggested: real users, exclude self, shuffle, take top 8
-      const allUsers   = Array.isArray(usersRes) ? usersRes : []
-      const others     = allUsers.filter((u) => u._id !== currentUserId && isRealId(u._id))
-      const shuffled   = others.sort(() => Math.random() - 0.5).slice(0, 8)
+      const others   = usersRes.filter((u) => u._id !== currentUserId && isRealId(u._id))
+      const shuffled = others.sort(() => Math.random() - 0.5).slice(0, 8)
       setSuggested(shuffled)
     } catch (err) {
-      console.error('Explore fetch error:', err)
+      toast.error(err.name === 'AbortError' ? 'Request timed out' : 'Failed to load Explore')
     } finally {
       setLoading(false)
     }
-  }, [currentUserId])
+  }, [currentUserId, toast])
 
   useEffect(() => { fetchExplore() }, [fetchExplore])
 
@@ -382,6 +375,7 @@ export default function Explore() {
                 token={token}
                 author={authorMap[post.userId?.toString()] || null}
                 navigate={navigate}
+                toast={toast}
               />
             ))
           )
@@ -405,6 +399,7 @@ export default function Explore() {
                   currentUserId={currentUserId}
                   token={token}
                   navigate={navigate}
+                  toast={toast}
                 />
               ))}
             </div>

@@ -10,15 +10,27 @@ const webPush    = require('web-push')
 const dotenv     = require('dotenv')
 dotenv.config()
 
-// ── VAPID setup ───────────────────────────────────────────────────────────────
-const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || 'BH0RjhWx-wImvCTAXnCJ3VnXCB1DJ5h4IFwFIMHWPusB6DzM4BPiqDRAFgZKeexzjdij98IHzBCeowNXxjgHog8'
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'eW36tbRtj_mVUm8nYDCelMtvipsxNpQtrOlh9s41ZE0'
+if (!process.env.MONGO_URI) {
+  console.error('❌ notification-service: MONGO_URI is not set. Add it to notification-service/.env')
+  process.exit(1)
+}
+if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
+  console.error('❌ notification-service: FRONTEND_URL is required in production (CORS). Set it in .env')
+  process.exit(1)
+}
 
-webPush.setVapidDetails(
-  'mailto:wandr@example.com',
-  VAPID_PUBLIC,
-  VAPID_PRIVATE
-)
+// ── VAPID setup (no hardcoded keys; production requires env) ──────────────────
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    console.error('❌ notification-service: VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required in production. Set them in .env')
+    process.exit(1)
+  }
+}
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY
+if (VAPID_PUBLIC && VAPID_PRIVATE) {
+  webPush.setVapidDetails('mailto:wandr@example.com', VAPID_PUBLIC, VAPID_PRIVATE)
+}
 
 const app    = express()
 const server = http.createServer(app)
@@ -27,7 +39,10 @@ const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } 
 app.set('io', io)
 
 app.use(helmet())
-app.use(cors())
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : true,
+  credentials: true,
+}))
 app.use(express.json({ limit: '4kb' }))
 app.use(mongoSanitize())
 
@@ -87,6 +102,11 @@ app.delete('/push/unsubscribe', async (req, res) => {
 
 app.get('/', (req, res) => res.send('🛎️ Notification Service is running!'))
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ ok: true, service: 'notification-service' })
+})
+
+
 // ── Socket.io ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   const userId = socket.handshake.query.userId
@@ -104,14 +124,18 @@ app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' })
 })
 
-// ── DB + server ───────────────────────────────────────────────────────────────
+// ── DB + server (start listening only after DB is ready) ────────────────────────
 const PORT = process.env.PORT || 5006
 
 mongoose
-  .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log('✅ MongoDB connected for Notification Service'))
-  .catch((err) => console.log(err))
-
-server.listen(PORT, () =>
-  console.log(`✅ Notification service + Socket.io running at: http://localhost:${PORT}`)
-)
+  .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true, serverSelectionTimeoutMS: 5000 })
+  .then(() => {
+    console.log('✅ MongoDB connected for Notification Service')
+    server.listen(PORT, () =>
+      console.log(`✅ Notification service + Socket.io running at: http://localhost:${PORT}`)
+    )
+  })
+  .catch((err) => {
+    console.error('❌ notification-service: MongoDB connection failed:', err.message)
+    process.exit(1)
+  })

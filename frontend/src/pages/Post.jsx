@@ -1,9 +1,12 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { locations } from './dummyData'
+import { dummyPosts } from './dummyData'
 import { useToast } from '../context/ToastContext'
 import { uploadManyToCloudinary, uploadToCloudinary } from '../utils/cloudinary'
 import { CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
 import {
   ImagePlus,
   Video,
@@ -38,10 +41,33 @@ const Post = () => {
   const [step,         setStep]         = useState(1)
   const [gpsLoading,   setGpsLoading]   = useState(false)
   const [locationMode, setLocationMode] = useState('select')
+  const [postLocations, setPostLocations] = useState([])
 
   const fileInputRef    = useRef(null)
   const addMoreInputRef = useRef(null)
   const videoInputRef   = useRef(null)
+
+  // Locations list: only destinations that have posts (from API + dummy posts)
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const fromDummy = dummyPosts.map((p) => p.location?.trim()).filter(Boolean)
+      try {
+        const res = await api.get(`${CONTENT_SERVICE}/posts?page=1&limit=100`)
+        if (cancelled) return
+        const data = res.data
+        const postsList = Array.isArray(data) ? data : (data?.posts ?? [])
+        const fromPosts = postsList.map((p) => p.location?.trim()).filter(Boolean)
+        if (!cancelled) {
+          setPostLocations(Array.from(new Set([...fromDummy, ...fromPosts])).sort())
+        }
+      } catch {
+        if (!cancelled) setPostLocations(Array.from(new Set(fromDummy)).sort())
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
 
   // ── Image compression ────────────────────────────────────────────────────────
   const compressImage = (file) =>
@@ -141,17 +167,18 @@ const Post = () => {
   const detectLocation = () => {
     if (!navigator.geolocation) { toast.error('Geolocation not supported.'); return }
     setGpsLoading(true)
-    navigator.geolocation.getCurrentPosition(
+      navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
         try {
-          const res  = await fetch(
+          const res = await fetchWithTimeout(
             `https://nominatim.openstreetmap.org/reverse?lat=${coords.latitude}&lon=${coords.longitude}&format=json`,
-            { headers: { 'Accept-Language': 'en' } }
+            { headers: { 'Accept-Language': 'en' }, timeout: 8000 }
           )
-          const data = await res.json()
-          const city    = data.address?.city || data.address?.town || data.address?.village || data.address?.county || ''
-          const country = data.address?.country || ''
-          const place   = city && country ? `${city}, ${country}` : data.display_name?.split(',').slice(0, 2).join(',').trim() || 'Unknown'
+          const parsed = await parseResponse(res)
+          const data = parsed.ok && parsed.data ? parsed.data : null
+          const city    = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.county || ''
+          const country = data?.address?.country || ''
+          const place   = city && country ? `${city}, ${country}` : data?.display_name?.split(',').slice(0, 2).join(',').trim() || 'Unknown'
           setLocation(place)
           setLocationMode('text')
           toast.success(`📍 Located: ${place}`)
@@ -186,19 +213,14 @@ const Post = () => {
         body.images = uploadedUrls
       }
 
-      const res = await fetch(`${CONTENT_SERVICE}/posts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
+      const res = await api.post(`${CONTENT_SERVICE}/posts`, body)
+      if (res.data) {
         toast.success('Post shared!')
         navigate('/feed')
       } else {
-        const err = await res.json()
-        toast.error('Failed to post: ' + (err.message || 'Unknown error'))
+        toast.error('Failed to post')
       }
-    } catch { toast.error('Network error. Please try again.') }
+    } catch (err) { toast.error(err?.response?.data?.message || err?.message || 'Network error. Please try again.') }
     finally { setLoading(false) }
   }
 
@@ -408,7 +430,7 @@ const Post = () => {
                 {locationMode === 'select' ? (
                   <select className="form-input" value={location} onChange={(e) => setLocation(e.target.value)} required>
                     <option value="">Select a destination…</option>
-                    {locations.map((loc, idx) => <option key={idx} value={loc}>{loc}</option>)}
+                    {postLocations.map((loc, idx) => <option key={idx} value={loc}>{loc}</option>)}
                   </select>
                 ) : (
                   <input className="form-input" type="text" placeholder="City, Country…" value={location} onChange={(e) => setLocation(e.target.value)} required />

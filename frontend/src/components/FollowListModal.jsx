@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { X, Search, UserPlus, UserMinus } from 'lucide-react'
 import { getAvatarSrc } from '../utils/avatar'
 import { USER_SERVICE, NOTIF_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { useToast } from '../context/ToastContext'
 
 /**
  * FollowListModal
@@ -12,41 +14,32 @@ import { USER_SERVICE, NOTIF_SERVICE } from '../constants/api'
  *   onSelect   – called with the user object when a row is clicked
  */
 export default function FollowListModal({ type, userId, onClose, onSelect }) {
-  const token         = localStorage.getItem('token')
   const currentUserId = localStorage.getItem('currentUserId')
+  const toast = useToast()
 
   const [users,   setUsers]   = useState([])
   const [loading, setLoading] = useState(true)
   const [filter,  setFilter]  = useState('')
 
-  // Track follow state for each user in the list
   const [followingSet, setFollowingSet] = useState(new Set())
   const [busySet,      setBusySet]      = useState(new Set())
 
   const fetchList = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${userId}/${type}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setUsers(data)
+      const res = await api.get(`${USER_SERVICE}/users/${userId}/${type}`)
+      const data = Array.isArray(res.data) ? res.data : []
+      setUsers(data)
 
-        // Also fetch who the current user is following so we can pre-fill state
-        const meFollowingRes = await fetch(
-          `${USER_SERVICE}/users/${currentUserId}/following`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        )
-        if (meFollowingRes.ok) {
-          const meFollowing = await meFollowingRes.json()
-          const ids = new Set(meFollowing.map((u) => u._id?.toString()))
-          setFollowingSet(ids)
-        }
-      }
-    } catch (_) {}
-    finally { setLoading(false) }
-  }, [userId, type, token, currentUserId])
+      const meRes = await api.get(`${USER_SERVICE}/users/${currentUserId}/following`).catch(() => ({ data: [] }))
+      const meFollowing = Array.isArray(meRes?.data) ? meRes.data : []
+      setFollowingSet(new Set(meFollowing.map((u) => u._id?.toString())))
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load list')
+    } finally {
+      setLoading(false)
+    }
+  }, [userId, type, currentUserId, toast])
 
   useEffect(() => {
     fetchList()
@@ -84,22 +77,14 @@ export default function FollowListModal({ type, userId, onClose, onSelect }) {
     })
 
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${targetId}/follow`, {
-        method: wasFollowing ? 'DELETE' : 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error()
-
-      // Send follow notification
-      if (!wasFollowing) {
-        fetch(`${NOTIF_SERVICE}/notifications`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: currentUserId, targetUserId: targetId, type: 'follow' }),
-        }).catch(() => {})
+      if (wasFollowing) {
+        await api.delete(`${USER_SERVICE}/users/${targetId}/follow`)
+      } else {
+        await api.post(`${USER_SERVICE}/users/${targetId}/follow`)
+        api.post(`${NOTIF_SERVICE}/notifications`, { userId: currentUserId, targetUserId: targetId, type: 'follow' }).catch(() => {})
       }
-    } catch {
-      // Roll back
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update follow')
       setFollowingSet((prev) => {
         const next = new Set(prev)
         wasFollowing ? next.add(targetId) : next.delete(targetId)

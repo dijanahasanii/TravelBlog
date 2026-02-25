@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import api from '../utils/api'
 import { useToast } from '../context/ToastContext'
 import { ArrowLeft, Mail, CheckCircle2 } from 'lucide-react'
 import { USER_SERVICE } from '../constants/api'
@@ -19,27 +20,15 @@ export default function ChangeEmail() {
     }
 
     const userId = localStorage.getItem('currentUserId')
-    const token = localStorage.getItem('token')
     setLoading(true)
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${userId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ email }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setSuccess(true)
-        toast.success('Email updated successfully!')
-        setTimeout(() => navigate('/profile'), 2000)
-      } else {
-        toast.error(data.message || 'Failed to update email.')
-      }
-    } catch {
-      toast.error('Network error. Please try again.')
+      await api.patch(`${USER_SERVICE}/users/${userId}`, { email })
+      setSuccess(true)
+      toast.success('Email updated successfully!')
+      setTimeout(() => navigate('/profile'), 2000)
+    } catch (err) {
+      const msg = err.response?.data?.message
+      toast.error(msg || 'Failed to update email.')
     } finally {
       setLoading(false)
     }

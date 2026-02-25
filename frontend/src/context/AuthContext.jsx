@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { USER_SERVICE } from '../constants/api'
+import api from '../utils/api'
 
 function AuthPage({ setIsAuthenticated }) {
   const [isLogin, setIsLogin] = useState(true)
@@ -20,26 +22,18 @@ function AuthPage({ setIsAuthenticated }) {
     e.preventDefault()
     setError('')
 
-    const endpoint = isLogin ? '/api/auth/login' : '/api/auth/signup'
+    const endpoint = isLogin ? `${USER_SERVICE}/login` : `${USER_SERVICE}/register`
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Authentication failed')
-      }
-
+      const response = await api.post(endpoint, formData)
+      const data = response.data
+      if (!data?.token) throw new Error(data?.message || 'Authentication failed')
       localStorage.setItem('token', data.token)
+      if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken)
       setIsAuthenticated(true)
       navigate('/feed')
     } catch (err) {
-      setError(err.message)
+      setError(err?.response?.data?.message || err?.message || 'Authentication failed')
     }
   }
 

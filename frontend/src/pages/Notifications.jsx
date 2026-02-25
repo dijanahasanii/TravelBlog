@@ -5,10 +5,15 @@ import { getAvatarSrc, dicebearUrl } from '../utils/avatar'
 import { useSocket } from '../context/SocketContext'
 import { Heart, MessageCircle, UserPlus, Bell, RefreshCw, Inbox } from 'lucide-react'
 import { USER_SERVICE, NOTIF_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
+import { useToast } from '../context/ToastContext'
 
 const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
 
 export default function Notifications() {
+  const toast = useToast()
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -24,11 +29,10 @@ export default function Notifications() {
   useEffect(() => {
     const handler = async (e) => {
       const notif = e.detail
-      // Enrich with actor username
       try {
-        const res = await fetch(`${USER_SERVICE}/users/${notif.userId}`)
-        if (res.ok) {
-          const user = await res.json()
+        const res = await api.get(`${USER_SERVICE}/users/${notif.userId}`)
+        if (res?.data) {
+          const user = res.data
           const action =
             notif.type === 'like'   ? 'liked your post' :
             notif.type === 'follow' ? 'started following you' :
@@ -50,19 +54,15 @@ export default function Notifications() {
     else setLoading(true)
 
     try {
-      const res = await fetch(
-        `${NOTIF_SERVICE}/notifications/${currentUserId}`
-      )
-      if (res.ok) {
-        const data = await res.json()
-        const enriched = await Promise.all(
-          data.map(async (n) => {
-            try {
-              const userRes = await fetch(
-                `${USER_SERVICE}/users/${n.userId}`
-              )
-              if (userRes.ok) {
-                const user = await userRes.json()
+      const res = await fetchWithTimeout(`${NOTIF_SERVICE}/notifications/${currentUserId}`, { timeout: 10000 })
+      const parsed = await parseResponse(res)
+      const raw = parsed.ok && Array.isArray(parsed.data) ? parsed.data : []
+      const enriched = await Promise.all(
+        raw.map(async (n) => {
+          try {
+            const userRes = await api.get(`${USER_SERVICE}/users/${n.userId}`)
+            if (userRes?.data) {
+              const user = userRes.data
                 const action =
                   n.type === 'like'    ? 'liked your post' :
                   n.type === 'follow'  ? 'started following you' :
@@ -78,17 +78,15 @@ export default function Notifications() {
             return n
           })
         )
-        // Sort newest first
-        enriched.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        setNotifications(enriched)
-      }
+      enriched.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      setNotifications(enriched)
     } catch (err) {
-      console.error('Failed to fetch notifications', err)
+      toast.error(err?.name === 'AbortError' ? 'Request timed out' : 'Failed to load notifications')
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [currentUserId])
+  }, [currentUserId, toast])
 
   useEffect(() => {
     fetchNotifications()

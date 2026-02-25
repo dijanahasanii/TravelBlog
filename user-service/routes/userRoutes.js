@@ -57,7 +57,9 @@ router.post('/:id/follow', verifyToken, async (req, res) => {
 router.delete('/:id/follow', verifyToken, async (req, res) => {
   const followingId = req.params.id
   const followerId  = req.user.id
-
+  if (!mongoose.Types.ObjectId.isValid(followingId)) {
+    return res.status(400).json({ message: 'Invalid user ID' })
+  }
   try {
     await Follow.deleteOne({ followerId, followingId })
     res.json({ following: false })
@@ -141,6 +143,9 @@ router.get('/:id/following-ids', verifyToken, async (req, res) => {
 router.post('/:id/report', verifyToken, async (req, res) => {
   const { reason, details } = req.body
   if (!reason) return res.status(400).json({ message: 'Reason is required' })
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ message: 'Invalid user ID' })
+  }
   try {
     await Report.create({
       reporterId: req.user.id,
@@ -176,6 +181,9 @@ router.post('/:id/block', verifyToken, async (req, res) => {
 })
 
 router.delete('/:id/block', verifyToken, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ message: 'Invalid user ID' })
+  }
   try {
     await Block.deleteOne({ blockerId: req.user.id, blockedId: req.params.id })
     res.json({ message: 'User unblocked' })
@@ -186,6 +194,9 @@ router.delete('/:id/block', verifyToken, async (req, res) => {
 
 // GET /users/:id/block-status  → is the current user blocking them?
 router.get('/:id/block-status', verifyToken, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.json({ isBlocked: false })
+  }
   try {
     const block = await Block.findOne({ blockerId: req.user.id, blockedId: req.params.id })
     res.json({ isBlocked: !!block })

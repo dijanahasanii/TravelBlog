@@ -12,14 +12,18 @@ const commentRoutes = require('./routes/comments')
 const mediaRoutes = require('./routes/media')
 
 dotenv.config()
+if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
+  console.error('❌ content-service: FRONTEND_URL is required in production (CORS). Set it in .env')
+  process.exit(1)
+}
 const app = express()
-
-// Connect to MongoDB
-connectDB()
 
 // Middleware
 app.use(helmet())
-app.use(cors())
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : true,
+  credentials: true,
+}))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use(mongoSanitize())
@@ -41,9 +45,10 @@ app.use('/likes', likeRoutes)
 app.use('/comments', commentRoutes)
 app.use('/media', mediaRoutes)
 
-// Health check
-app.get('/', (req, res) => {
-  res.send('Content Service is running')
+app.get('/', (req, res) => res.send('Content Service is running'))
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ ok: true, service: 'content-service' })
 })
 
 // 404 — unknown routes return JSON instead of HTML
@@ -51,7 +56,15 @@ app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' })
 })
 
+// Start server only after MongoDB is ready
 const PORT = process.env.PORT || 5002
-app.listen(PORT, () => {
-  console.log(`🚀 Content service running on http://localhost:${PORT}`)
-})
+connectDB()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 Content service running on http://localhost:${PORT}`)
+    })
+  })
+  .catch((err) => {
+    console.error('❌ content-service: startup failed:', err.message)
+    process.exit(1)
+  })

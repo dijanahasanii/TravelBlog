@@ -8,6 +8,9 @@ import ImageCarousel from '../components/ImageCarousel'
 import VideoPlayer from '../components/VideoPlayer'
 import FollowListModal from '../components/FollowListModal'
 import { USER_SERVICE, CONTENT_SERVICE, NOTIF_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
 import {
   ArrowLeft, MapPin, Heart, MessageCircle, FileText,
   Grid3X3, UserPlus, UserMinus, Users, ChevronDown, ChevronUp,
@@ -26,7 +29,7 @@ const REPORT_REASONS = [
 const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
 
 // ── Interactive post card (no edit/delete since it's someone else's profile) ──
-function ProfilePostCard({ post, currentUserId, token, profileUser, navigate }) {
+function ProfilePostCard({ post, currentUserId, token, profileUser, navigate, toast }) {
   const [likes,        setLikes]        = useState(post.likes || [])
   const [comments,     setComments]     = useState(post.comments || [])
   const [showComments, setShowComments] = useState(false)
@@ -49,32 +52,23 @@ function ProfilePostCard({ post, currentUserId, token, profileUser, navigate }) 
     )
 
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId: post._id }),
-      })
-      if (!res.ok) throw new Error()
+      await api.post(`${CONTENT_SERVICE}/likes`, { postId: post._id })
     } catch (_) {
-      // Roll back
       setLikes((prev) =>
         alreadyLiked
           ? [...prev, { userId: currentUserId }]
           : prev.filter((l) => l?.userId?.toString() !== currentUserId && l !== currentUserId)
       )
+      toast?.error('Failed to update like')
     }
   }
 
   const handleAddComment = async (text, parentId = null) => {
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId: post._id, text, parentId }),
-      })
-      const data = await res.json()
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, { postId: post._id, text, parentId })
+      const data = res.data
       const username = localStorage.getItem('username')
-      const entry = data.comment || {
+      const entry = data?.comment || {
         _id: Date.now().toString(),
         userId: currentUserId,
         text,
@@ -84,7 +78,9 @@ function ProfilePostCard({ post, currentUserId, token, profileUser, navigate }) 
         createdAt: new Date().toISOString(),
       }
       setComments((prev) => [...prev, entry])
-    } catch (_) {}
+    } catch (err) {
+      toast?.error(err.response?.data?.error || 'Failed to post comment')
+    }
   }
 
   return (
@@ -207,40 +203,38 @@ export default function UserProfileView() {
     setLoading(true)
     setError(null)
     try {
-      const [userRes, postsRes, statsRes, blockRes] = await Promise.all([
-        fetch(`${USER_SERVICE}/users/${userId}`),
-        fetch(`${CONTENT_SERVICE}/posts/user/${userId}`),
-        fetch(`${USER_SERVICE}/users/${userId}/follow-stats`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`${USER_SERVICE}/users/${userId}/block-status`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+      const [userParsed, postsParsed, statsParsed, blockParsed] = await Promise.all([
+        fetchWithTimeout(`${USER_SERVICE}/users/${userId}`, { timeout: 10000 }).then(parseResponse),
+        fetchWithTimeout(`${CONTENT_SERVICE}/posts/user/${userId}`, { timeout: 10000 }).then(parseResponse),
+        fetchWithTimeout(`${USER_SERVICE}/users/${userId}/follow-stats`, { timeout: 8000, headers: { Authorization: `Bearer ${token}` } }).then(parseResponse),
+        fetchWithTimeout(`${USER_SERVICE}/users/${userId}/block-status`, { timeout: 5000, headers: { Authorization: `Bearer ${token}` } }).then(parseResponse),
       ])
 
-      if (!userRes.ok) throw new Error('User not found')
-      const userData = await userRes.json()
-      setUser(userData)
+      if (!userParsed.ok || userParsed.data == null) throw new Error(userParsed.error || 'User not found')
+      setUser(userParsed.data)
+      if (statsParsed.ok && statsParsed.data) setStats(statsParsed.data)
+      if (blockParsed.ok && blockParsed.data?.isBlocked != null) setIsBlocked(blockParsed.data.isBlocked)
 
-      if (statsRes.ok) setStats(await statsRes.json())
-      if (blockRes.ok) { const b = await blockRes.json(); setIsBlocked(b.isBlocked) }
-
-      if (postsRes.ok) {
-        const postsData = await postsRes.json()
+      if (postsParsed.ok && Array.isArray(postsParsed.data)) {
+        const postsData = postsParsed.data
         const enriched = await Promise.all(
           postsData.map(async (p) => {
-            const [likesRes, commentsRes] = await Promise.all([
-              fetch(`${CONTENT_SERVICE}/likes/${p._id}`).then((r) => r.ok ? r.json() : []),
-              fetch(`${CONTENT_SERVICE}/comments/${p._id}`).then((r) => r.ok ? r.json() : []),
+            const [likesP, commentsP] = await Promise.all([
+              fetchWithTimeout(`${CONTENT_SERVICE}/likes/${p._id}`, { timeout: 5000 }).then(parseResponse),
+              fetchWithTimeout(`${CONTENT_SERVICE}/comments/${p._id}`, { timeout: 5000 }).then(parseResponse),
             ])
-            return { ...p, likes: likesRes, comments: commentsRes }
+            return {
+              ...p,
+              likes: likesP.ok && Array.isArray(likesP.data) ? likesP.data : [],
+              comments: commentsP.ok && Array.isArray(commentsP.data) ? commentsP.data : [],
+            }
           })
         )
         enriched.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         setPosts(enriched)
       }
     } catch (err) {
-      setError(err.message || 'Failed to load profile')
+      setError(err.name === 'AbortError' ? 'Request timed out' : (err.message || 'Failed to load profile'))
     } finally {
       setLoading(false)
     }
@@ -259,29 +253,20 @@ export default function UserProfileView() {
     setFollowBusy(true)
     const isFollowing = stats.isFollowing
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${userId}/follow`, {
-        method: isFollowing ? 'DELETE' : 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        setStats((prev) => ({
-          ...prev,
-          isFollowing: !isFollowing,
-          followers: prev.followers + (isFollowing ? -1 : 1),
-        }))
-        toast.success(isFollowing ? `Unfollowed @${user?.username}` : `Following @${user?.username}!`)
-        if (!isFollowing) {
-          fetch(`${NOTIF_SERVICE}/notifications`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: currentUserId, targetUserId: userId, type: 'follow' }),
-          }).catch(() => {})
-        }
+      if (isFollowing) {
+        await api.delete(`${USER_SERVICE}/users/${userId}/follow`)
       } else {
-        toast.error('Failed to update follow')
+        await api.post(`${USER_SERVICE}/users/${userId}/follow`)
+        api.post(`${NOTIF_SERVICE}/notifications`, { userId: currentUserId, targetUserId: userId, type: 'follow' }).catch(() => {})
       }
-    } catch {
-      toast.error('Network error')
+      setStats((prev) => ({
+        ...prev,
+        isFollowing: !isFollowing,
+        followers: prev.followers + (isFollowing ? -1 : 1),
+      }))
+      toast.success(isFollowing ? `Unfollowed @${user?.username}` : `Following @${user?.username}!`)
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update follow')
     } finally {
       setFollowBusy(false)
     }
@@ -292,17 +277,16 @@ export default function UserProfileView() {
     setBlockBusy(true)
     setMenuOpen(false)
     try {
-      const method = isBlocked ? 'DELETE' : 'POST'
-      const res = await fetch(`${USER_SERVICE}/users/${userId}/block`, {
-        method,
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        setIsBlocked((v) => !v)
-        toast.success(isBlocked ? 'User unblocked' : 'User blocked')
+      if (isBlocked) {
+        await api.delete(`${USER_SERVICE}/users/${userId}/block`)
+      } else {
+        await api.post(`${USER_SERVICE}/users/${userId}/block`)
       }
-    } catch { toast.error('Network error') }
-    finally { setBlockBusy(false) }
+      setIsBlocked((v) => !v)
+      toast.success(isBlocked ? 'User unblocked' : 'User blocked')
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Network error')
+    } finally { setBlockBusy(false) }
   }
 
   const handleReport = async (e) => {
@@ -310,22 +294,14 @@ export default function UserProfileView() {
     if (!reportReason || reportSubmitting) return
     setReportSubmitting(true)
     try {
-      const res = await fetch(`${USER_SERVICE}/users/${userId}/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reason: reportReason, details: reportDetails }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        toast.success('Report submitted. Thank you.')
-        setShowReport(false)
-        setReportReason('')
-        setReportDetails('')
-      } else {
-        toast.error(data.message || 'Could not submit report')
-      }
-    } catch { toast.error('Network error') }
-    finally { setReportSubmitting(false) }
+      await api.post(`${USER_SERVICE}/users/${userId}/report`, { reason: reportReason, details: reportDetails })
+      toast.success('Report submitted. Thank you.')
+      setShowReport(false)
+      setReportReason('')
+      setReportDetails('')
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not submit report')
+    } finally { setReportSubmitting(false) }
   }
 
   if (loading) {
@@ -554,6 +530,7 @@ export default function UserProfileView() {
               token={token}
               profileUser={user}
               navigate={navigate}
+              toast={toast}
             />
           ))
         )}

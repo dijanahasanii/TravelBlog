@@ -8,6 +8,9 @@ import ImageCarousel from '../components/ImageCarousel'
 import VideoPlayer from '../components/VideoPlayer'
 import ConfirmModal from '../components/ConfirmModal'
 import { USER_SERVICE, CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
 import {
   ArrowLeft, Heart, MessageCircle, MapPin, MoreHorizontal, Pencil, Trash2,
 } from 'lucide-react'
@@ -42,27 +45,28 @@ export default function PostDetail() {
       return
     }
     setLoading(true)
+    setError(null)
     try {
-      const [postRes, likesRes, commentsRes] = await Promise.all([
-        fetch(`${CONTENT_SERVICE}/posts/${postId}`),
-        fetch(`${CONTENT_SERVICE}/likes/${postId}`).then((r) => r.ok ? r.json() : []),
-        fetch(`${CONTENT_SERVICE}/comments/${postId}`).then((r) => r.ok ? r.json() : []),
+      const [postParsed, likesParsed, commentsParsed] = await Promise.all([
+        fetchWithTimeout(`${CONTENT_SERVICE}/posts/${postId}`, { timeout: 10000 }).then(parseResponse),
+        fetchWithTimeout(`${CONTENT_SERVICE}/likes/${postId}`, { timeout: 8000 }).then(parseResponse),
+        fetchWithTimeout(`${CONTENT_SERVICE}/comments/${postId}`, { timeout: 8000 }).then(parseResponse),
       ])
 
-      if (!postRes.ok) throw new Error('Post not found')
-      const postData = await postRes.json()
+      if (!postParsed.ok || postParsed.data == null) throw new Error(postParsed.error || 'Post not found')
+      const postData = postParsed.data
       setPost(postData)
-      setLikes(likesRes)
+      setLikes(likesParsed.ok && Array.isArray(likesParsed.data) ? likesParsed.data : [])
+      const commentsRes = commentsParsed.ok && Array.isArray(commentsParsed.data) ? commentsParsed.data : []
 
-      // Enrich comments with usernames
       const enriched = await Promise.all(
         commentsRes.map(async (c) => {
           if (c.userId?.toString() === currentUserId) return { ...c, username }
           if (!isRealId(c.userId?.toString())) return c
           try {
-            const r = await fetch(`${USER_SERVICE}/users/${c.userId}`)
-            if (r.ok) {
-              const u = await r.json()
+            const r = await fetchWithTimeout(`${USER_SERVICE}/users/${c.userId}`, { timeout: 5000 }).then(parseResponse)
+            if (r.ok && r.data) {
+              const u = r.data
               return { ...c, username: u.username, authorAvatar: getAvatarSrc(u) }
             }
           } catch (_) {}
@@ -71,13 +75,12 @@ export default function PostDetail() {
       )
       setComments(enriched)
 
-      // Fetch author
       if (isRealId(postData.userId?.toString())) {
-        const userRes = await fetch(`${USER_SERVICE}/users/${postData.userId}`)
-        if (userRes.ok) setAuthor(await userRes.json())
+        const userParsed = await fetchWithTimeout(`${USER_SERVICE}/users/${postData.userId}`, { timeout: 5000 }).then(parseResponse)
+        if (userParsed.ok && userParsed.data) setAuthor(userParsed.data)
       }
     } catch (err) {
-      setError(err.message || 'Failed to load post')
+      setError(err.name === 'AbortError' ? 'Request timed out' : (err.message || 'Failed to load post'))
     } finally {
       setLoading(false)
     }
@@ -107,14 +110,8 @@ export default function PostDetail() {
     )
 
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/likes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId }),
-      })
-      if (!res.ok) throw new Error()
+      await api.post(`${CONTENT_SERVICE}/likes`, { postId })
     } catch {
-      // Roll back
       setLikes((prev) =>
         alreadyLiked
           ? [...prev, { userId: currentUserId }]
@@ -128,13 +125,9 @@ export default function PostDetail() {
     if (!text?.trim() || submitting) return
     setSubmitting(true)
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ postId, text: text.trim(), parentId }),
-      })
-      const data = await res.json()
-      const entry = data.comment || {
+      const res = await api.post(`${CONTENT_SERVICE}/comments`, { postId, text: text.trim(), parentId })
+      const data = res.data
+      const entry = data?.comment || {
         _id: Date.now().toString(),
         userId: currentUserId,
         text: text.trim(),
@@ -144,8 +137,9 @@ export default function PostDetail() {
         createdAt: new Date().toISOString(),
       }
       setComments((prev) => [...prev, { ...entry, username }])
-    } catch { toast.error('Failed to post comment') }
-    finally { setSubmitting(false) }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to post comment')
+    } finally { setSubmitting(false) }
   }
 
   const handleDelete = () => {
@@ -155,17 +149,12 @@ export default function PostDetail() {
       confirmText: 'Delete',
       onConfirm: async () => {
         try {
-          const res = await fetch(`${CONTENT_SERVICE}/posts/${postId}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (res.ok) {
-            toast.success('Post deleted')
-            navigate(-1)
-          } else {
-            toast.error('Failed to delete post')
-          }
-        } catch { toast.error('Network error') }
+          await api.delete(`${CONTENT_SERVICE}/posts/${postId}`)
+          toast.success('Post deleted')
+          navigate(-1)
+        } catch (err) {
+          toast.error(err.response?.data?.message || 'Failed to delete post')
+        }
       },
     })
   }

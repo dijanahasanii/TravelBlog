@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Compass, ArrowLeft, Mail, User, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react'
 import { USER_SERVICE } from '../constants/api'
+import api from '../utils/api'
 
 export default function ForgotPassword() {
   const navigate = useNavigate()
@@ -22,14 +23,10 @@ export default function ForgotPassword() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${USER_SERVICE}/verify-identity`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), email: email.trim() }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setError(data.message || 'Could not verify identity'); return }
-      setResetToken(data.resetToken)
+      const res = await api.post(`${USER_SERVICE}/verify-identity`, { username: username.trim(), email: email.trim() })
+      const data = res.data
+      if (!data?.resetToken) { setError(data?.message || 'Could not verify identity'); return }
+      setResetToken(data.resetToken || data.reset_token)
       setStep('reset')
     } catch {
       setError('Network error. Please try again.')
@@ -45,16 +42,10 @@ export default function ForgotPassword() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${USER_SERVICE}/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resetToken, newPassword }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setError(data.message || 'Reset failed'); return }
+      await api.post(`${USER_SERVICE}/reset-password`, { resetToken, newPassword })
       setStep('done')
-    } catch {
-      setError('Network error. Please try again.')
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Network error. Please try again.')
     } finally {
       setLoading(false)
     }

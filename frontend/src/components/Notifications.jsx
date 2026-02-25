@@ -1,23 +1,25 @@
 import React, { useEffect, useState } from 'react'
-import { fetchNotifications } from '../api'
+import api from '../utils/api'
+import { NOTIF_SERVICE } from '../constants/api'
 
 const Notifications = ({ token, currentUserId }) => {
   const [notifications, setNotifications] = useState([])
 
   useEffect(() => {
+    if (!currentUserId) return
     const fetchData = async () => {
       try {
-        const data = await fetchNotifications(token)
-        setNotifications(data)
+        const res = await api.get(`${NOTIF_SERVICE}/notifications/${currentUserId}`)
+        const data = Array.isArray(res?.data) ? res.data : []
       } catch (err) {
         console.error('Error fetching notifications:', err)
       }
     }
 
     fetchData()
-    const interval = setInterval(fetchData, 10000) // Poll every 10s
+    const interval = setInterval(fetchData, 10000)
     return () => clearInterval(interval)
-  }, [token])
+  }, [currentUserId])
 
   return (
     <div className="notifications">

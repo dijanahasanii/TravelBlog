@@ -36,6 +36,10 @@ exports.updatePost = async (req, res) => {
   try {
     const { postId } = req.params
     const { caption, location } = req.body
+    const mongoose = require('mongoose')
+    if (!postId || !mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(404).json({ message: 'Post not found' })
+    }
 
     const post = await Post.findById(postId)
     if (!post) return res.status(404).json({ message: 'Post not found' })

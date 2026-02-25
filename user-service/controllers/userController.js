@@ -1,9 +1,14 @@
 const User = require('../models/User')
 const bcrypt = require('bcryptjs')
+const mongoose = require('mongoose')
 
 exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId).select('-password')
+    const { userId } = req.params
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(404).json({ message: 'User not found' })
+    }
+    const user = await User.findById(userId).select('-password')
     if (!user) return res.status(404).json({ message: 'User not found' })
     res.json(user)
   } catch (err) {
@@ -12,6 +17,9 @@ exports.getUserById = async (req, res) => {
 }
 
 exports.updateUser = async (req, res) => {
+  if (!req.params.id || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: 'User not found' })
+  }
   try {
     const { currentPassword, newPassword, avatar, ...otherFields } = req.body
     const updateData = { ...otherFields }

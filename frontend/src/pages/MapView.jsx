@@ -3,9 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
-import { MapPin, ArrowLeft } from 'lucide-react'
+import { MapPin, ArrowLeft, Locate } from 'lucide-react'
 import { formatTimeAgo } from '../utils/formatTime'
 import { CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { parseResponse } from '../utils/parseResponse'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
+import { useToast } from '../context/ToastContext'
 
 // Fix Leaflet's default marker icon paths (broken by webpack)
 delete L.Icon.Default.prototype._getIconUrl
@@ -26,6 +30,14 @@ const brandIcon = new L.Icon({
   shadowSize:    [41, 41],
 })
 
+// "You are here" — blue dot
+const userLocationIcon = new L.DivIcon({
+  className: 'wandr-user-location-dot',
+  html: '<div style="width:16px;height:16px;border-radius:50%;background:var(--brand-500,#6366f1);border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+})
+
 const isRealId = (id) => /^[a-f\d]{24}$/i.test(id)
 
 // Geocode a location string → { lat, lng } via Nominatim
@@ -33,13 +45,13 @@ const geocodeCache = {}
 async function geocode(locationStr) {
   if (geocodeCache[locationStr]) return geocodeCache[locationStr]
   try {
-    const res  = await fetch(
+    const res = await fetchWithTimeout(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(locationStr)}&format=json&limit=1`,
-      { headers: { 'Accept-Language': 'en' } }
+      { headers: { 'Accept-Language': 'en' }, timeout: 8000 }
     )
-    const data = await res.json()
-    if (data?.[0]) {
-      const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
+    const parsed = await parseResponse(res)
+    if (parsed.ok && Array.isArray(parsed.data) && parsed.data[0]) {
+      const coords = { lat: parseFloat(parsed.data[0].lat), lng: parseFloat(parsed.data[0].lon) }
       geocodeCache[locationStr] = coords
       return coords
     }
@@ -47,37 +59,50 @@ async function geocode(locationStr) {
   return null
 }
 
-// Re-center map when markers load
-function MapFit({ points }) {
+// Re-center map when markers load (and optionally include user location)
+function MapFit({ points, userLocation }) {
   const map = useMap()
   const fitted = useRef(false)
   useEffect(() => {
-    if (!fitted.current && points.length > 0) {
-      const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]))
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 10 })
+    if (fitted.current) return
+    const allPoints = [...points.map((p) => [p.lat, p.lng])]
+    if (userLocation) allPoints.push([userLocation.lat, userLocation.lng])
+    if (allPoints.length > 0) {
+      const bounds = L.latLngBounds(allPoints)
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 })
       fitted.current = true
     }
-  }, [points, map])
+  }, [points, userLocation, map])
+  return null
+}
+
+// Fly to user location when they click "My location"
+function FlyToUser({ userLocation, trigger }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!userLocation || !trigger) return
+    map.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1 })
+  }, [userLocation, trigger, map])
   return null
 }
 
 export default function MapView() {
   const navigate      = useNavigate()
-  const token         = localStorage.getItem('token')
+  const toast         = useToast()
 
-  const [markers,  setMarkers]  = useState([])  // [{ lat, lng, posts: [] }]
-  const [loading,  setLoading]  = useState(true)
+  const [markers,       setMarkers]       = useState([])  // [{ lat, lng, posts: [] }]
+  const [loading,       setLoading]       = useState(true)
+  const [userLocation,  setUserLocation]  = useState(null)   // { lat, lng } or null
+  const [locationError, setLocationError] = useState(null)   // string or null
+  const [locationLoading, setLocationLoading] = useState(true)
+  const [flyToUserTrigger, setFlyToUserTrigger] = useState(0)
 
   const fetchAndGeocode = useCallback(async () => {
     setLoading(true)
     try {
-      // Fetch all recent posts (up to 100 for map)
-      const res  = await fetch(`${CONTENT_SERVICE}/posts?page=1&limit=100`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Failed to fetch posts')
-      const data = await res.json()
-      const posts = Array.isArray(data) ? data : data.posts || []
+      const res = await api.get(`${CONTENT_SERVICE}/posts?page=1&limit=100`)
+      const data = res.data
+      const posts = Array.isArray(data) ? data : (data?.posts ?? [])
 
       // Group posts by location string
       const locationMap = {}
@@ -97,13 +122,58 @@ export default function MapView() {
 
       setMarkers(results)
     } catch (e) {
-      console.warn('Map fetch error:', e)
+      toast.error(e?.name === 'AbortError' ? 'Request timed out' : 'Failed to load map posts')
+      setMarkers([])
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [toast])
 
   useEffect(() => { fetchAndGeocode() }, [fetchAndGeocode])
+
+  // Detect current location on mount
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation not supported')
+      setLocationLoading(false)
+      return
+    }
+    setLocationLoading(true)
+    setLocationError(null)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+        setLocationError(null)
+        setLocationLoading(false)
+      },
+      (err) => {
+        setLocationError(err.code === 1 ? 'Location denied' : 'Location unavailable')
+        setUserLocation(null)
+        setLocationLoading(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    )
+  }, [])
+
+  const goToMyLocation = () => {
+    if (userLocation) {
+      setFlyToUserTrigger((t) => t + 1)
+    } else if (!locationLoading && !locationError) {
+      // Retry once
+      setLocationLoading(true)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          setUserLocation(loc)
+          setLocationError(null)
+          setLocationLoading(false)
+          setFlyToUserTrigger((t) => t + 1)
+        },
+        () => setLocationLoading(false),
+        { enableHighAccuracy: true, timeout: 8000 }
+      )
+    }
+  }
 
   const totalPosts = markers.reduce((s, m) => s + m.posts.length, 0)
 
@@ -125,6 +195,24 @@ export default function MapView() {
         <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: 0, flex: 1 }}>
           World Map
         </h1>
+        <button
+          type="button"
+          onClick={goToMyLocation}
+          disabled={locationLoading}
+          title={userLocation ? 'Center on my location' : locationError || 'Get my location'}
+          style={{
+            padding: 8,
+            borderRadius: 'var(--radius-full)',
+            border: '1px solid var(--border-subtle)',
+            background: userLocation ? 'var(--brand-500)' : 'var(--surface-elevated)',
+            color: userLocation ? 'white' : 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Locate size={18} />
+        </button>
         {!loading && (
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontWeight: 'var(--weight-medium)' }}>
             {totalPosts} post{totalPosts !== 1 ? 's' : ''} · {markers.length} location{markers.length !== 1 ? 's' : ''}
@@ -152,7 +240,14 @@ export default function MapView() {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
-              <MapFit points={markers} />
+              <MapFit points={markers} userLocation={userLocation} />
+              <FlyToUser userLocation={userLocation} trigger={flyToUserTrigger} />
+
+              {userLocation && (
+                <Marker position={[userLocation.lat, userLocation.lng]} icon={userLocationIcon}>
+                  <Popup>You are here</Popup>
+                </Marker>
+              )}
 
               {markers.map((m, i) => (
                 <Marker key={i} position={[m.lat, m.lng]} icon={brandIcon}>

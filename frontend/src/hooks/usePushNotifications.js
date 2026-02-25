@@ -9,6 +9,9 @@
  */
 import { useEffect, useCallback, useState } from 'react'
 import { NOTIF_SERVICE } from '../constants/api'
+import api from '../utils/api'
+import { fetchWithTimeout } from '../utils/fetchWithTimeout'
+import { parseResponse } from '../utils/parseResponse'
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -44,10 +47,10 @@ export default function usePushNotifications() {
       setPermission(perm)
       if (perm !== 'granted') return { ok: false, reason: 'denied' }
 
-      // 2. Get VAPID public key
-      const keyRes = await fetch(`${NOTIF_SERVICE}/push/vapid-public-key`)
-      if (!keyRes.ok) return { ok: false, reason: 'vapid_fetch_failed' }
-      const { key } = await keyRes.json()
+      const keyRes = await fetchWithTimeout(`${NOTIF_SERVICE}/push/vapid-public-key`, { timeout: 5000 })
+      const parsed = await parseResponse(keyRes)
+      if (!parsed.ok || !parsed.data?.key) return { ok: false, reason: 'vapid_fetch_failed' }
+      const { key } = parsed.data
 
       // 3. Subscribe via PushManager
       const registration = await navigator.serviceWorker.ready
@@ -60,13 +63,11 @@ export default function usePushNotifications() {
       const userId = localStorage.getItem('currentUserId')
       if (!userId) return { ok: false, reason: 'not_logged_in' }
 
-      const saveRes = await fetch(`${NOTIF_SERVICE}/push/subscribe`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ userId, subscription: subscription.toJSON() }),
-      })
-      if (!saveRes.ok) return { ok: false, reason: 'save_failed' }
-
+      try {
+        await api.post(`${NOTIF_SERVICE}/push/subscribe`, { userId, subscription: subscription.toJSON() })
+      } catch (_) {
+        return { ok: false, reason: 'save_failed' }
+      }
       localStorage.setItem(SUB_KEY, 'true')
       setSubscribed(true)
       return { ok: true }
@@ -84,10 +85,8 @@ export default function usePushNotifications() {
         await subscription.unsubscribe()
         const userId = localStorage.getItem('currentUserId')
         if (userId) {
-          await fetch(`${NOTIF_SERVICE}/push/unsubscribe`, {
-            method:  'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ userId, endpoint: subscription.endpoint }),
+          await api.delete(`${NOTIF_SERVICE}/push/unsubscribe`, {
+            data: { userId, endpoint: subscription.endpoint },
           })
         }
       }

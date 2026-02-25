@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { X, MapPin, FileText, Save } from 'lucide-react'
 import { useToast } from '../context/ToastContext'
 import { CONTENT_SERVICE } from '../constants/api'
+import api from '../utils/api'
 
 export default function EditPostModal({ post, onClose, onSave, allLocations }) {
   const [caption, setCaption] = useState('')
@@ -45,24 +46,12 @@ export default function EditPostModal({ post, onClose, onSave, allLocations }) {
     }
 
     setSaving(true)
-    const token = localStorage.getItem('token')
     try {
-      const res = await fetch(`${CONTENT_SERVICE}/posts/${post._id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ caption: caption.trim(), location }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        onSave(data.post || data)
-      } else {
-        toast.error('Failed to update: ' + (data.message || 'Unknown error'))
-      }
-    } catch {
-      toast.error('Network error. Please try again.')
+      const res = await api.put(`${CONTENT_SERVICE}/posts/${post._id}`, { caption: caption.trim(), location })
+      const data = res.data
+      onSave(data?.post || data)
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update post')
     } finally {
       setSaving(false)
     }
